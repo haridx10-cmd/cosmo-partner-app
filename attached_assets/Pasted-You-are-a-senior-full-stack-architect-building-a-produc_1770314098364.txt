@@ -1,0 +1,284 @@
+You are a senior full-stack architect building a production-grade internal employee app MVP.
+
+The application must be optimized to run inside Replit environment and deploy as a mobile-friendly Progressive Web App (PWA).
+
+The goal is to create a beautician employee tracking and appointment management system.
+
+---
+
+🎯 PROJECT OBJECTIVE
+
+Build Phase-1 MVP for a salon-at-home service company.
+
+Employees (beauticians) must be able to:
+
+• View appointments
+• Track appointment status
+• Raise service issues (MOST IMPORTANT FEATURE)
+• View customer details
+• Track travel location
+• Start navigation or cab booking
+
+---
+
+🧱 TECH STACK (REPLIT FRIENDLY)
+
+Frontend:
+• Next.js 14 OR Vite + React
+• TypeScript
+• Tailwind CSS
+• Shadcn UI components
+
+Backend:
+• Supabase (Preferred) OR Firebase
+
+Database:
+• Supabase PostgreSQL
+• Supabase Realtime
+• Supabase Auth
+
+Maps:
+• Google Maps JS SDK
+• Or Mapbox if easier
+
+State Management:
+• Zustand
+
+Deployment:
+• Must run on Replit
+• Must support PWA installation
+• Must support mobile responsive layout
+
+---
+
+⚠️ MVP SCOPE
+
+Only build:
+
+• Employee mobile dashboard
+• Appointment screens
+• Issue raise system
+• Location tracking
+• Attendance toggle
+
+DO NOT build:
+
+• Admin panel
+• Payments
+• Analytics
+• Marketing tools
+
+---
+
+📱 APP STRUCTURE
+
+Bottom Navigation:
+
+1. New
+2. Ongoing
+3. Wallet (placeholder)
+4. Products (placeholder)
+5. Menu (placeholder)
+
+---
+
+SCREEN 1 — NEW PAGE
+
+Display upcoming appointments.
+
+Sections:
+• Today
+• Tomorrow
+• Completed
+• Pending
+
+Each order card must show:
+
+• Customer name
+• Address
+• Time
+• Order value
+• Status badge
+
+---
+
+SCREEN 2 — ONGOING PAGE
+
+Tabs:
+
+• Today
+• Tomorrow
+• Completed
+
+ONGOING → TODAY rules:
+
+Group orders into:
+
+Confirmed → Assigned orders  
+Pending → Under confirmation  
+
+Each card shows:
+
+• Customer name
+• Address
+• Appointment time
+• Payment mode
+• Amount
+• Status badge
+
+---
+
+⭐ EXPANDABLE ORDER CARD
+
+Click order to expand showing:
+
+1. Service list
+2. Duration
+3. Price breakdown
+4. Customer phone
+5. Embedded map
+6. Buttons:
+
+• Book Uber
+• Book Rapido
+• Start Navigation
+
+Use deep linking for external apps.
+
+---
+
+⭐ MOST IMPORTANT FEATURE — ISSUE RAISE
+
+Each order must have:
+
+"Raise Issue" button.
+
+Modal must allow:
+
+• Cab Not Available
+• Client Not Picking
+• 1 Hour Delay
+• 2 Hour Delay
+• Reschedule Request
+• Address Verification
+• Product Not Available
+• Payment Issue
+• Other (custom text)
+
+When submitted:
+
+Store inside Supabase:
+
+issues table fields:
+
+• order_id
+• beautician_id
+• timestamp
+• issue_type
+• notes
+• GPS latitude
+• GPS longitude
+
+---
+
+⭐ LOCATION TRACKING
+
+When beautician clicks:
+
+"Start Travel"
+
+App must:
+
+• Request browser GPS permission
+• Track location every 10 seconds
+• Save updates to Supabase realtime table
+
+---
+
+⭐ ATTENDANCE MVP
+
+Add toggle:
+
+"Start Shift" / "End Shift"
+
+Store:
+
+• beautician_id
+• login_time
+• logout_time
+
+---
+
+⭐ DATABASE SCHEMA
+
+Create Supabase tables:
+
+beauticians
+orders
+issues
+attendance
+live_tracking
+
+Example orders table:
+
+id
+customer_name
+phone
+address
+latitude
+longitude
+services JSON
+amount
+duration
+appointment_time
+payment_mode
+status
+
+---
+
+⭐ UI DESIGN REQUIREMENTS
+
+Mobile first layout
+
+Color rules:
+
+Green → Completed  
+Purple → Confirmed  
+Red → Pending  
+Orange → Issue raised  
+
+---
+
+⭐ CODE QUALITY
+
+• Component based architecture
+• Reusable OrderCard
+• Custom hooks for Supabase queries
+• Environment config
+• Strict TypeScript typing
+
+---
+
+⭐ PWA REQUIREMENTS
+
+• Installable on mobile
+• Offline UI caching
+• App-like navigation
+• Splash screen
+• Service worker enabled
+
+---
+
+⭐ DELIVERABLE OUTPUT (PHASE 1)
+
+Output ONLY:
+
+1. Folder architecture
+2. Supabase schema
+3. Navigation skeleton
+4. Order card component
+5. Issue modal UI
+6. Mock seed data
+
+DO NOT build full system immediately.
+Wait for approval before next phase.
