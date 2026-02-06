@@ -58,7 +58,7 @@ function parseDateTime(dateStr: string, timeStr: string): Date {
 
 async function getSheetData(sheetId: string, range: string): Promise<string[][] | null> {
   try {
-    const apiKey = process.env.GOOGLE_SHEETS_API_KEY;
+    const apiKey = process.env.GOOGLE_SHEETS_API_KEY || process.env.GOOGLE_API_KEY;
     const credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
     let sheets;
