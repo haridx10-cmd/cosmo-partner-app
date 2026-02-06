@@ -14,6 +14,7 @@ interface SheetRow {
   appointmentTime: string;
   paymentMode: string;
   employeeName: string;
+  mapsUrl: string;
 }
 
 function parseServices(servicesStr: string): { name: string; price: number }[] {
@@ -89,23 +90,58 @@ async function getSheetData(sheetId: string, range: string): Promise<string[][] 
   }
 }
 
+function extractMapsUrlFromText(text: string): string | null {
+  const urlMatch = text.match(/(https?:\/\/[^\s]*google\.com\/maps[^\s]*)/i) 
+    || text.match(/(https?:\/\/maps\.app\.goo\.gl[^\s]*)/i)
+    || text.match(/(https?:\/\/goo\.gl\/maps[^\s]*)/i);
+  return urlMatch ? urlMatch[1] : null;
+}
+
+function extractCoordsFromMapsUrl(url: string): { lat: number; lng: number } | null {
+  const patterns = [
+    /@(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /[?&]destination=(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /[?&]daddr=(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /\/place\/[^/]*\/(-?\d+\.\d+),(-?\d+\.\d+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) {
+      const lat = parseFloat(match[1]);
+      const lng = parseFloat(match[2]);
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        return { lat, lng };
+      }
+    }
+  }
+  return null;
+}
+
 function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
   if (row.length < 6) return null;
+  const address = row[2]?.trim() || "";
+  let mapsUrl = row[9]?.trim() || "";
+  if (!mapsUrl) {
+    const embeddedUrl = extractMapsUrlFromText(address);
+    if (embeddedUrl) mapsUrl = embeddedUrl;
+  }
   return {
     rowIndex,
     customerName: row[0]?.trim() || "",
     phone: row[1]?.trim() || "",
-    address: row[2]?.trim() || "",
+    address,
     services: row[3]?.trim() || "",
     amount: parseInt(row[4]?.trim() || "0") || 0,
     appointmentDate: row[5]?.trim() || "",
     appointmentTime: row[6]?.trim() || "10:00 AM",
     paymentMode: row[7]?.trim() || "cash",
     employeeName: row[8]?.trim() || "",
+    mapsUrl,
   };
 }
 
-export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:I"): Promise<{ imported: number; updated: number; errors: number }> {
+export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:J"): Promise<{ imported: number; updated: number; errors: number }> {
   const result = { imported: 0, updated: 0, errors: 0 };
 
   const rows = await getSheetData(sheetId, range);
@@ -131,12 +167,25 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
       const services = parseServices(sheetRow.services);
       const totalAmount = sheetRow.amount || services.reduce((sum, s) => sum + s.price, 0);
 
+      let latitude: number | undefined;
+      let longitude: number | undefined;
+      if (sheetRow.mapsUrl) {
+        const coords = extractCoordsFromMapsUrl(sheetRow.mapsUrl);
+        if (coords) {
+          latitude = coords.lat;
+          longitude = coords.lng;
+        }
+      }
+
       const existing = await storage.getOrderBySheetRowId(sheetRowId);
       if (existing) {
         await storage.updateOrder(existing.id, {
           customerName: sheetRow.customerName,
           phone: sheetRow.phone,
           address: sheetRow.address,
+          mapsUrl: sheetRow.mapsUrl || undefined,
+          latitude: latitude ?? existing.latitude ?? undefined,
+          longitude: longitude ?? existing.longitude ?? undefined,
           services,
           amount: totalAmount,
           appointmentTime,
@@ -149,6 +198,9 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           customerName: sheetRow.customerName,
           phone: sheetRow.phone,
           address: sheetRow.address,
+          mapsUrl: sheetRow.mapsUrl || undefined,
+          latitude,
+          longitude,
           services,
           amount: totalAmount,
           duration: 60,

@@ -53,7 +53,15 @@ Production-grade salon-at-home employee management system with custom authentica
 - POST `/api/admin/sync-sheets` - Manual Google Sheets sync
 
 ## Google Sheets Integration
-Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SERVICE_ACCOUNT_JSON` for automatic 2-minute sync. Expected sheet columns: CustomerName, Phone, Address, Services, Amount, Date, Time, PaymentMode, EmployeeName.
+Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SERVICE_ACCOUNT_JSON` for automatic 2-minute sync. Expected sheet columns: CustomerName, Phone, Address, Services, Amount, Date, Time, PaymentMode, EmployeeName, MapsURL (column J optional).
+
+## Smart Navigation System
+- Orders have `maps_url` field for Google Maps links
+- Sheets sync auto-detects maps URLs in address text or column J
+- Navigation priority: maps_url > lat/lng > address geocoding (Nominatim)
+- OrderDetailsPage has "Call Customer" (tel: link) and "Navigate" (smart location) buttons
+- Map preview uses resolved coordinates with geocoding fallback
 
 ## Recent Changes
+- 2026-02-06: Added Smart Location Navigation with maps_url, geocoding fallback, call customer, navigate buttons
 - 2026-02-06: Complete rebuild with custom auth, admin dashboard, GPS tracking, Google Sheets sync

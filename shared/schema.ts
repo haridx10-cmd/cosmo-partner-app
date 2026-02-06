@@ -36,6 +36,7 @@ export const orders = pgTable("orders", {
   customerName: text("customer_name").notNull(),
   phone: text("phone").notNull(),
   address: text("address").notNull(),
+  mapsUrl: text("maps_url"),
   latitude: doublePrecision("latitude"),
   longitude: doublePrecision("longitude"),
   services: jsonb("services").notNull().$type<{ name: string; price: number }[]>(),
@@ -46,7 +47,7 @@ export const orders = pgTable("orders", {
   status: text("status").notNull().default("pending"),
   employeeId: integer("employee_id").references(() => employees.id),
   hasIssue: boolean("has_issue").default(false),
-  sheetRowId: text("sheet_row_id"), // For Google Sheets sync dedup
+  sheetRowId: text("sheet_row_id"),
 });
 
 // === ISSUES TABLE ===

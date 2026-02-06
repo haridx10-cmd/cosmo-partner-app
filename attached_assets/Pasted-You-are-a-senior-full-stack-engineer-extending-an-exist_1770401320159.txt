@@ -1,0 +1,197 @@
+You are a senior full-stack engineer extending an existing Salon-at-Home Employee PWA built in Replit.
+
+The app displays order details including:
+
+• Customer Name
+• Phone
+• Address
+• Map preview
+
+You must now implement a robust Smart Location Navigation System.
+
+⭐ PRIMARY GOAL
+
+Beautician must be able to open accurate customer location using data coming from Google Sheets.
+
+Location data in database may contain:
+
+1️⃣ Full Google Maps URL
+2️⃣ Raw Address text
+3️⃣ Latitude + Longitude
+4️⃣ Combination of above
+
+The system must automatically detect and open navigation correctly.
+
+⭐ LOCATION PRIORITY LOGIC
+
+When beautician clicks "Start Navigation":
+
+Use this order of priority:
+
+Priority 1 — If Google Maps URL Exists
+
+Open URL directly.
+
+Priority 2 — If Latitude & Longitude Exists
+
+Generate navigation link:
+
+https://www.google.com/maps/dir/?api=1&destination=LAT,LNG
+
+Priority 3 — If Only Address Exists
+
+Encode address:
+
+https://www.google.com/maps/search/?api=1&query=ENCODED_ADDRESS
+
+⭐ LOCATION DATA SOURCE
+
+Orders table may contain fields:
+
+customer_address
+maps_url
+latitude
+longitude
+
+
+Google Sheet integration may populate:
+
+• maps_url column
+• address column
+
+⭐ IMPLEMENT SMART LOCATION DETECTION FUNCTION
+
+Create reusable utility:
+
+function openCustomerNavigation(order)
+
+Logic Required
+if(order.maps_url exists AND contains "google.com/maps")
+   open maps_url directly
+
+else if(order.latitude AND order.longitude exist)
+   open navigation using lat/lng
+
+else if(order.customer_address exists)
+   open navigation using encoded address
+
+else
+   show error toast "Customer location unavailable"
+
+Maps URL Validation
+
+Check:
+
+maps_url.includes("google.com/maps")
+
+Always Open Using
+window.open(url, "_blank")
+
+
+Ensure compatibility with:
+
+• Mobile Chrome
+• Android PWA
+• iOS Safari
+
+⭐ MAP PREVIEW REQUIREMENT (Leaflet Fix)
+If Maps URL Exists
+
+Extract latitude & longitude from URL if possible.
+
+If not possible:
+
+Fallback to geocode using address.
+
+If Only Address Exists
+
+Use OpenStreetMap Nominatim API:
+
+https://nominatim.openstreetmap.org/search?format=json&q=ADDRESS
+
+
+Cache coordinates after first lookup.
+
+⭐ CLICK TO CALL FEATURE
+
+When beautician taps phone number:
+
+Open dialer using:
+
+tel:PHONE_NUMBER
+
+UI Requirements
+
+Phone row must include:
+
+📞 Call icon
+Clickable phone number
+
+Validation
+
+If phone missing:
+
+Disable call button.
+
+⭐ ORDER DETAILS UI UPDATE
+
+Add two buttons:
+
+Button 1
+📞 Call Customer
+
+
+Triggers phone dial.
+
+Button 2
+🧭 Start Navigation
+
+
+Triggers smart navigation logic.
+
+⭐ GOOGLE SHEETS COMPATIBILITY REQUIREMENT
+
+System must accept:
+
+Example Address:
+
+Sy.No.33/1, Shubh Enclave, Haralur Road Varthur Hobli, Taluk, Bengaluru, Karnataka 560102
+
+
+Example Maps URL:
+
+https://www.google.com/maps?...&daddr=Sy.No.33/1,+Shubh+Enclave,+Haralur+Road...
+
+
+System must work with both formats without admin cleanup.
+
+⭐ ERROR HANDLING
+
+If navigation fails:
+
+Show toast:
+
+Unable to open customer location
+
+⭐ PERFORMANCE REQUIREMENTS
+
+• Do not geocode repeatedly
+• Cache results in database
+• Lazy load map preview
+
+⭐ DELIVERABLES REQUIRED
+
+Provide:
+
+1️⃣ Smart navigation utility
+2️⃣ Updated Order Details UI
+3️⃣ Click-to-call integration
+4️⃣ Leaflet preview accuracy fix
+5️⃣ Google Sheets compatible parsing
+6️⃣ Fallback handling
+
+⭐ DEVELOPMENT RULE
+
+Modify existing order module only.
+
+Do NOT rebuild full app.
