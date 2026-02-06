@@ -1,42 +1,39 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type IssueInput } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
+import { useAuth } from "@/hooks/use-auth";
 
 export function useBeautician() {
-  return useQuery({
-    queryKey: [api.beautician.me.path],
-    queryFn: async () => {
-      const res = await fetch(api.beautician.me.path, { credentials: "include" });
-      if (!res.ok) {
-        if (res.status === 404) return null; // Not set up as beautician yet
-        throw new Error("Failed to fetch profile");
-      }
-      return api.beautician.me.responses[200].parse(await res.json());
-    },
-    // Don't refetch too aggressively for MVP
-    staleTime: 1000 * 60 * 5, 
-  });
+  const { user } = useAuth();
+  return {
+    data: user ? {
+      id: user.id,
+      name: user.name,
+      isOnline: user.isOnline,
+      currentLatitude: user.currentLatitude,
+      currentLongitude: user.currentLongitude,
+    } : null,
+    isLoading: false,
+  };
 }
 
 export function useToggleShift() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  
+
   return useMutation({
     mutationFn: async (action: 'start_shift' | 'end_shift') => {
-      const res = await fetch(api.beautician.toggleShift.path, {
-        method: api.beautician.toggleShift.method,
+      const res = await fetch(api.employee.toggleShift.path, {
+        method: api.employee.toggleShift.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
         credentials: "include",
       });
-      
       if (!res.ok) throw new Error("Failed to update shift status");
-      return api.beautician.toggleShift.responses[200].parse(await res.json());
+      return api.employee.toggleShift.responses[200].parse(await res.json());
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: [api.beautician.me.path] });
+      queryClient.invalidateQueries({ queryKey: [api.auth.me.path] });
       toast({
         title: data.success ? "Status Updated" : "Update Failed",
         description: `You are now ${data.state}`,
@@ -56,21 +53,21 @@ export function useToggleShift() {
 export function useUpdateLocation() {
   return useMutation({
     mutationFn: async (coords: { latitude: number; longitude: number }) => {
-      const res = await fetch(api.beautician.updateLocation.path, {
-        method: api.beautician.updateLocation.method,
+      const res = await fetch(api.employee.updateLocation.path, {
+        method: api.employee.updateLocation.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(coords),
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to update location");
-      return api.beautician.updateLocation.responses[200].parse(await res.json());
+      return api.employee.updateLocation.responses[200].parse(await res.json());
     },
   });
 }
 
 export function useCreateIssue() {
   const { toast } = useToast();
-  
+
   return useMutation({
     mutationFn: async (data: IssueInput) => {
       const res = await fetch(api.issues.create.path, {
@@ -79,7 +76,6 @@ export function useCreateIssue() {
         body: JSON.stringify(data),
         credentials: "include",
       });
-      
       if (!res.ok) throw new Error("Failed to report issue");
       return api.issues.create.responses[201].parse(await res.json());
     },
