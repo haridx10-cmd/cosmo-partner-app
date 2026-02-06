@@ -81,6 +81,23 @@ export const locationHistory = pgTable("location_history", {
   timestamp: timestamp("timestamp").defaultNow(),
 });
 
+// === BEAUTICIAN LIVE TRACKING ===
+export const beauticianLiveTracking = pgTable("beautician_live_tracking", {
+  id: serial("id").primaryKey(),
+  beauticianId: integer("beautician_id").notNull().references(() => employees.id),
+  orderId: integer("order_id").references(() => orders.id),
+  latitude: doublePrecision("latitude").notNull(),
+  longitude: doublePrecision("longitude").notNull(),
+  accuracy: doublePrecision("accuracy"),
+  speed: doublePrecision("speed"),
+  status: text("status").notNull().default("idle"), // 'traveling' | 'at_location' | 'idle'
+  timestamp: timestamp("timestamp").defaultNow(),
+}, (table) => [
+  index("idx_live_tracking_beautician").on(table.beauticianId),
+  index("idx_live_tracking_order").on(table.orderId),
+  index("idx_live_tracking_timestamp").on(table.timestamp),
+]);
+
 // === RELATIONS ===
 export const employeeRelations = relations(employees, ({ many }) => ({
   orders: many(orders),
@@ -102,6 +119,7 @@ export const issuesRelations = relations(issues, ({ one }) => ({
 export const insertEmployeeSchema = createInsertSchema(employees).omit({ id: true, createdAt: true });
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true });
+export const insertLiveTrackingSchema = createInsertSchema(beauticianLiveTracking).omit({ id: true, timestamp: true });
 
 // === TYPES ===
 export type Employee = typeof employees.$inferSelect;
@@ -109,6 +127,8 @@ export type Order = typeof orders.$inferSelect;
 export type Issue = typeof issues.$inferSelect;
 export type Attendance = typeof attendance.$inferSelect;
 export type LocationUpdate = typeof locationHistory.$inferSelect;
+export type LiveTracking = typeof beauticianLiveTracking.$inferSelect;
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
+export type InsertLiveTracking = z.infer<typeof insertLiveTrackingSchema>;

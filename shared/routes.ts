@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertIssueSchema, employees, orders, issues } from './schema';
+import { insertIssueSchema, employees, orders, issues, beauticianLiveTracking } from './schema';
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),
@@ -67,9 +67,39 @@ export const api = {
     updateLocation: {
       method: 'POST' as const,
       path: '/api/employee/location',
-      input: z.object({ latitude: z.number(), longitude: z.number() }),
+      input: z.object({
+        latitude: z.number(),
+        longitude: z.number(),
+        accuracy: z.number().optional(),
+        speed: z.number().nullable().optional(),
+        orderId: z.number().nullable().optional(),
+        trackingStatus: z.enum(['traveling', 'at_location', 'idle']).optional(),
+      }),
       responses: {
         200: z.object({ success: z.boolean() }),
+      },
+    },
+  },
+  tracking: {
+    liveByBeautician: {
+      method: 'GET' as const,
+      path: '/api/tracking/live/:beauticianId',
+      responses: {
+        200: z.custom<typeof beauticianLiveTracking.$inferSelect>().nullable(),
+      },
+    },
+    historyByBeautician: {
+      method: 'GET' as const,
+      path: '/api/tracking/beautician/:beauticianId',
+      responses: {
+        200: z.array(z.custom<typeof beauticianLiveTracking.$inferSelect>()),
+      },
+    },
+    byOrder: {
+      method: 'GET' as const,
+      path: '/api/tracking/order/:orderId',
+      responses: {
+        200: z.array(z.custom<typeof beauticianLiveTracking.$inferSelect>()),
       },
     },
   },

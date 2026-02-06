@@ -144,8 +144,26 @@ export async function registerRoutes(
   });
 
   app.post(api.employee.updateLocation.path, loadEmployee, async (req: any, res) => {
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, accuracy, speed, orderId, trackingStatus } = req.body;
     await storage.updateEmployeeLocation(req.employee.id, latitude, longitude);
+
+    let status: 'traveling' | 'at_location' | 'idle' = 'idle';
+    if (trackingStatus) {
+      status = trackingStatus;
+    } else if (speed !== null && speed !== undefined) {
+      status = speed > 0.556 ? 'traveling' : 'idle'; // 2 km/h ≈ 0.556 m/s
+    }
+
+    await storage.insertLiveTracking({
+      beauticianId: req.employee.id,
+      orderId: orderId ?? null,
+      latitude,
+      longitude,
+      accuracy: accuracy ?? null,
+      speed: speed ?? null,
+      status,
+    });
+
     res.json({ success: true });
   });
 
@@ -224,6 +242,28 @@ export async function registerRoutes(
     }
   });
 
+  // === TRACKING ROUTES ===
+
+  app.get(api.tracking.liveByBeautician.path, requireAdmin, async (req, res) => {
+    const beauticianId = Number(req.params.beauticianId);
+    const latest = await storage.getLatestTrackingForBeautician(beauticianId);
+    res.json(latest || null);
+  });
+
+  app.get(api.tracking.historyByBeautician.path, requireAdmin, async (req, res) => {
+    const beauticianId = Number(req.params.beauticianId);
+    const since = new Date();
+    since.setDate(since.getDate() - 1); // last 24 hours by default
+    const history = await storage.getTrackingHistoryForBeautician(beauticianId, since);
+    res.json(history);
+  });
+
+  app.get(api.tracking.byOrder.path, requireAdmin, async (req, res) => {
+    const orderId = Number(req.params.orderId);
+    const history = await storage.getTrackingHistoryForOrder(orderId);
+    res.json(history);
+  });
+
   app.post(api.admin.syncSheets.path, requireAdmin, async (req, res) => {
     try {
       const { sheetId, range } = req.body;
@@ -243,6 +283,18 @@ export async function registerRoutes(
   if (sheetId) {
     startPeriodicSync(sheetId, process.env.GOOGLE_SHEET_RANGE || "Sheet1!A2:I", 2 * 60 * 1000);
   }
+
+  // Cleanup old tracking data every 6 hours (keep only 7 days)
+  setInterval(async () => {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const deleted = await storage.cleanupOldTrackingData(cutoff);
+      if (deleted > 0) console.log(`Cleaned up ${deleted} old tracking records`);
+    } catch (err) {
+      console.error("Tracking data cleanup error:", err);
+    }
+  }, 6 * 60 * 60 * 1000);
 
   return httpServer;
 }

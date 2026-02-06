@@ -1,10 +1,10 @@
 import { db } from "./db";
 import {
-  employees, orders, issues, attendance, locationHistory,
-  type Employee, type Order, type Issue, type Attendance,
-  type InsertIssue, type InsertOrder
+  employees, orders, issues, attendance, locationHistory, beauticianLiveTracking,
+  type Employee, type Order, type Issue, type Attendance, type LiveTracking,
+  type InsertIssue, type InsertOrder, type InsertLiveTracking
 } from "@shared/schema";
-import { eq, and, desc, sql, or, like, gte, lte, isNull } from "drizzle-orm";
+import { eq, and, desc, sql, or, like, gte, lte, lt, isNull } from "drizzle-orm";
 
 export interface IStorage {
   // Auth
@@ -32,6 +32,13 @@ export interface IStorage {
   // Attendance
   startShift(employeeId: number): Promise<Attendance>;
   endShift(employeeId: number): Promise<Attendance | undefined>;
+
+  // Live Tracking
+  insertLiveTracking(data: InsertLiveTracking): Promise<LiveTracking>;
+  getLatestTrackingForBeautician(beauticianId: number): Promise<LiveTracking | undefined>;
+  getTrackingHistoryForBeautician(beauticianId: number, since?: Date): Promise<LiveTracking[]>;
+  getTrackingHistoryForOrder(orderId: number): Promise<LiveTracking[]>;
+  cleanupOldTrackingData(olderThan: Date): Promise<number>;
 
   // Admin
   getAllOrders(): Promise<{ order: Order; employeeName: string | null }[]>;
@@ -199,6 +206,41 @@ export class DatabaseStorage implements IStorage {
       openIssues: issueCount.count,
       completedToday: completedCount.count,
     };
+  }
+
+  async insertLiveTracking(data: InsertLiveTracking): Promise<LiveTracking> {
+    const [record] = await db.insert(beauticianLiveTracking).values(data).returning();
+    return record;
+  }
+
+  async getLatestTrackingForBeautician(beauticianId: number): Promise<LiveTracking | undefined> {
+    const [record] = await db.select().from(beauticianLiveTracking)
+      .where(eq(beauticianLiveTracking.beauticianId, beauticianId))
+      .orderBy(desc(beauticianLiveTracking.timestamp))
+      .limit(1);
+    return record;
+  }
+
+  async getTrackingHistoryForBeautician(beauticianId: number, since?: Date): Promise<LiveTracking[]> {
+    const conditions = [eq(beauticianLiveTracking.beauticianId, beauticianId)];
+    if (since) {
+      conditions.push(gte(beauticianLiveTracking.timestamp, since));
+    }
+    return await db.select().from(beauticianLiveTracking)
+      .where(and(...conditions))
+      .orderBy(desc(beauticianLiveTracking.timestamp));
+  }
+
+  async getTrackingHistoryForOrder(orderId: number): Promise<LiveTracking[]> {
+    return await db.select().from(beauticianLiveTracking)
+      .where(eq(beauticianLiveTracking.orderId, orderId))
+      .orderBy(desc(beauticianLiveTracking.timestamp));
+  }
+
+  async cleanupOldTrackingData(olderThan: Date): Promise<number> {
+    const result = await db.delete(beauticianLiveTracking)
+      .where(lt(beauticianLiveTracking.timestamp, olderThan));
+    return result.rowCount ?? 0;
   }
 
   async getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null }[]> {

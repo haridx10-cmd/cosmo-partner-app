@@ -1,0 +1,138 @@
+You must now implement Live Beautician Location Tracking with cost-optimized updates.
+
+⭐ PRIMARY GOAL
+
+Track beautician’s real-time GPS location when:
+
+✅ Shift is active
+✅ Order is ongoing
+✅ Travel navigation started
+
+Store tracking data in backend database.
+
+Admin dashboard must later be able to:
+
+• View beautician live location
+• See movement trail
+• Detect delays
+
+⭐ TRACKING RULES
+
+Tracking must start automatically when:
+
+Beautician clicks:
+- Start Shift
+OR
+- Start Travel
+OR
+- Order status becomes "In Progress"
+
+
+Tracking must stop when:
+
+- Shift ends
+OR
+- Order marked completed
+
+⭐ LOCATION UPDATE INTERVAL
+
+Use smart dynamic intervals:
+
+When traveling to customer → every 15 seconds
+When at customer location → every 60 seconds
+When app in background → every 60 seconds
+
+⭐ LOCATION PERMISSION HANDLING
+
+Request:
+
+navigator.geolocation.watchPosition()
+
+
+Must support:
+
+• High accuracy mode
+• Background tracking (PWA compatible)
+• Graceful permission denial handling
+
+⭐ DATABASE TABLE REQUIRED
+
+Create table:
+
+beautician_live_tracking
+
+
+Schema:
+
+id
+beautician_id
+order_id
+latitude
+longitude
+accuracy
+speed
+timestamp
+status (traveling / at_location / idle)
+
+⭐ LOCATION UPDATE FUNCTION
+
+Create reusable service:
+
+startLiveTracking(orderId)
+stopLiveTracking()
+
+⭐ UPDATE LOGIC
+
+On each GPS update:
+
+Save record to database.
+
+⭐ MOVEMENT STATUS DETECTION
+
+If speed > 2 km/h → status = traveling
+If speed < 2 km/h → status = idle
+
+⭐ ADMIN DASHBOARD PREPARATION
+
+Create API endpoints:
+
+GET /tracking/live/{beauticianId}
+GET /tracking/order/{orderId}
+
+
+Return latest coordinates.
+
+⭐ BATTERY OPTIMIZATION RULES
+
+Do NOT track when:
+
+• App closed
+• Shift OFF
+• No active order
+
+⭐ ERROR HANDLING
+
+If GPS unavailable:
+
+Show banner:
+
+Location tracking unavailable
+
+⭐ DATA RETENTION RULE
+
+Keep detailed location logs only for:
+
+Last 7 days
+
+
+Archive older data.
+
+⭐ DELIVERABLES REQUIRED
+
+Provide:
+
+1️⃣ Live GPS tracking service
+2️⃣ Database schema
+3️⃣ Tracking start / stop logic
+4️⃣ API endpoints for admin
+5️⃣ Battery optimized interval handling
