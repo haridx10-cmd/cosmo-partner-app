@@ -6,6 +6,9 @@ import bcrypt from "bcryptjs";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
+import { db } from "./db";
+import { orders as ordersTable } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -207,6 +210,18 @@ export async function registerRoutes(
   app.get(api.admin.tracking.path, requireAdmin, async (req, res) => {
     const tracking = await storage.getTrackingData();
     res.json(tracking);
+  });
+
+  app.patch(api.admin.assignOrder.path, requireAdmin, async (req, res) => {
+    try {
+      const orderId = Number(req.params.id);
+      const { employeeId } = api.admin.assignOrder.input.parse(req.body);
+      const [updated] = await db.update(ordersTable).set({ employeeId }).where(eq(ordersTable.id, orderId)).returning();
+      if (!updated) return res.status(404).json({ message: "Order not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to assign order" });
+    }
   });
 
   app.post(api.admin.syncSheets.path, requireAdmin, async (req, res) => {

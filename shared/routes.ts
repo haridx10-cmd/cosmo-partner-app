@@ -176,6 +176,14 @@ export const api = {
         })),
       },
     },
+    assignOrder: {
+      method: 'PATCH' as const,
+      path: '/api/admin/orders/:id/assign',
+      input: z.object({ employeeId: z.number().nullable() }),
+      responses: {
+        200: z.custom<typeof orders.$inferSelect>(),
+      },
+    },
     syncSheets: {
       method: 'POST' as const,
       path: '/api/admin/sync-sheets',
