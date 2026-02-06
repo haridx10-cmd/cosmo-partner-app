@@ -1,10 +1,11 @@
 import { cn } from "@/lib/utils";
 
-type Status = "pending" | "confirmed" | "completed" | "cancelled";
+type Status = "pending" | "confirmed" | "in_progress" | "completed" | "cancelled";
 
 const styles: Record<Status, string> = {
   pending: "bg-orange-100 text-orange-700 border-orange-200",
   confirmed: "bg-purple-100 text-purple-700 border-purple-200",
+  in_progress: "bg-blue-100 text-blue-700 border-blue-200",
   completed: "bg-green-100 text-green-700 border-green-200",
   cancelled: "bg-red-100 text-red-700 border-red-200",
 };

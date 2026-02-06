@@ -167,6 +167,57 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // === SERVICE SESSION ROUTES ===
+
+  app.post(api.service.start.path, loadEmployee, async (req: any, res) => {
+    try {
+      const { orderId } = api.service.start.input.parse(req.body);
+      const order = await storage.getOrder(orderId);
+      if (!order) return res.status(404).json({ message: "Order not found" });
+      if (order.employeeId !== req.employee.id) return res.status(403).json({ message: "Not your order" });
+
+      const existing = await storage.getActiveSessionForOrder(orderId);
+      if (existing) return res.status(400).json({ message: "Service already in progress for this order" });
+
+      const expectedDuration = order.duration || 60;
+      const session = await storage.startServiceSession(orderId, req.employee.id, expectedDuration);
+
+      if (order.status === 'confirmed') {
+        await storage.updateOrderStatus(orderId, 'in_progress');
+      }
+
+      res.json(session);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to start service" });
+    }
+  });
+
+  app.post(api.service.stop.path, loadEmployee, async (req: any, res) => {
+    try {
+      const { sessionId } = api.service.stop.input.parse(req.body);
+      const session = await storage.stopServiceSession(sessionId);
+      res.json(session);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to stop service" });
+    }
+  });
+
+  app.get(api.service.activeForOrder.path, loadEmployee, async (req: any, res) => {
+    const orderId = Number(req.params.orderId);
+    const session = await storage.getActiveSessionForOrder(orderId);
+    res.json(session || null);
+  });
+
+  app.get(api.service.activeForBeautician.path, loadEmployee, async (req: any, res) => {
+    const session = await storage.getActiveSessionForBeautician(req.employee.id);
+    res.json(session || null);
+  });
+
+  app.get(api.service.allActive.path, requireAdmin, async (req, res) => {
+    const sessions = await storage.getAllActiveSessions();
+    res.json(sessions);
+  });
+
   // === ORDER ROUTES ===
 
   app.get(api.orders.list.path, loadEmployee, async (req: any, res) => {

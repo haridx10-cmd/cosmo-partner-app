@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
-  employees, orders, issues, attendance, locationHistory, beauticianLiveTracking,
-  type Employee, type Order, type Issue, type Attendance, type LiveTracking,
+  employees, orders, issues, attendance, locationHistory, beauticianLiveTracking, orderServiceSessions,
+  type Employee, type Order, type Issue, type Attendance, type LiveTracking, type ServiceSession,
   type InsertIssue, type InsertOrder, type InsertLiveTracking
 } from "@shared/schema";
 import { eq, and, desc, sql, or, like, gte, lte, lt, isNull } from "drizzle-orm";
@@ -40,12 +40,19 @@ export interface IStorage {
   getTrackingHistoryForOrder(orderId: number): Promise<LiveTracking[]>;
   cleanupOldTrackingData(olderThan: Date): Promise<number>;
 
+  // Service Sessions
+  startServiceSession(orderId: number, beauticianId: number, expectedDurationMinutes: number): Promise<ServiceSession>;
+  stopServiceSession(sessionId: number): Promise<ServiceSession>;
+  getActiveSessionForOrder(orderId: number): Promise<ServiceSession | undefined>;
+  getActiveSessionForBeautician(beauticianId: number): Promise<ServiceSession | undefined>;
+  getAllActiveSessions(): Promise<ServiceSession[]>;
+
   // Admin
   getAllOrders(): Promise<{ order: Order; employeeName: string | null }[]>;
   getAllIssues(): Promise<{ issue: Issue; employeeName: string | null; orderDetails: Order | null }[]>;
   getAllEmployees(): Promise<Employee[]>;
   getOverviewStats(): Promise<{ totalEmployees: number; activeEmployees: number; totalOrders: number; openIssues: number; completedToday: number }>;
-  getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null }[]>;
+  getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null; lastTrackingTime: string | null; lastSpeed: number | null; lastStatus: string | null; activeOrderId: number | null; activeOrderCustomer: string | null; serviceSessionId: number | null; serviceStartTime: string | null; expectedDurationMinutes: number | null }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -243,25 +250,86 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
-  async getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null }[]> {
+  async startServiceSession(orderId: number, beauticianId: number, expectedDurationMinutes: number): Promise<ServiceSession> {
+    const [session] = await db.insert(orderServiceSessions).values({
+      orderId,
+      beauticianId,
+      serviceStartTime: new Date(),
+      expectedDurationMinutes,
+      status: 'active',
+    }).returning();
+    return session;
+  }
+
+  async stopServiceSession(sessionId: number): Promise<ServiceSession> {
+    const [session] = await db.update(orderServiceSessions)
+      .set({ serviceEndTime: new Date(), status: 'completed' })
+      .where(eq(orderServiceSessions.id, sessionId))
+      .returning();
+    return session;
+  }
+
+  async getActiveSessionForOrder(orderId: number): Promise<ServiceSession | undefined> {
+    const [session] = await db.select().from(orderServiceSessions)
+      .where(and(eq(orderServiceSessions.orderId, orderId), eq(orderServiceSessions.status, 'active')))
+      .orderBy(desc(orderServiceSessions.serviceStartTime))
+      .limit(1);
+    return session;
+  }
+
+  async getActiveSessionForBeautician(beauticianId: number): Promise<ServiceSession | undefined> {
+    const [session] = await db.select().from(orderServiceSessions)
+      .where(and(eq(orderServiceSessions.beauticianId, beauticianId), eq(orderServiceSessions.status, 'active')))
+      .orderBy(desc(orderServiceSessions.serviceStartTime))
+      .limit(1);
+    return session;
+  }
+
+  async getAllActiveSessions(): Promise<ServiceSession[]> {
+    return await db.select().from(orderServiceSessions)
+      .where(eq(orderServiceSessions.status, 'active'));
+  }
+
+  async getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null; lastTrackingTime: string | null; lastSpeed: number | null; lastStatus: string | null; activeOrderId: number | null; activeOrderCustomer: string | null; serviceSessionId: number | null; serviceStartTime: string | null; expectedDurationMinutes: number | null }[]> {
     const emps = await db.select().from(employees).where(eq(employees.role, 'employee'));
     const result = [];
     for (const emp of emps) {
       const [openIssue] = await db.select({ count: sql<number>`count(*)::int` }).from(issues)
         .where(and(eq(issues.employeeId, emp.id), eq(issues.status, 'open')));
-      // Get current order status
       const [currentOrder] = await db.select().from(orders)
-        .where(and(eq(orders.employeeId, emp.id), eq(orders.status, 'confirmed')))
+        .where(and(eq(orders.employeeId, emp.id), or(eq(orders.status, 'confirmed'), eq(orders.status, 'in_progress'))))
         .orderBy(desc(orders.appointmentTime))
         .limit(1);
+
+      const [latestTracking] = await db.select().from(beauticianLiveTracking)
+        .where(eq(beauticianLiveTracking.beauticianId, emp.id))
+        .orderBy(desc(beauticianLiveTracking.timestamp))
+        .limit(1);
+
+      const lat = latestTracking?.latitude ?? emp.currentLatitude;
+      const lng = latestTracking?.longitude ?? emp.currentLongitude;
+
+      const [activeService] = await db.select().from(orderServiceSessions)
+        .where(and(eq(orderServiceSessions.beauticianId, emp.id), eq(orderServiceSessions.status, 'active')))
+        .orderBy(desc(orderServiceSessions.serviceStartTime))
+        .limit(1);
+
       result.push({
         id: emp.id,
         name: emp.name,
         isOnline: emp.isOnline,
-        currentLatitude: emp.currentLatitude,
-        currentLongitude: emp.currentLongitude,
+        currentLatitude: lat,
+        currentLongitude: lng,
         hasActiveIssue: openIssue.count > 0,
         currentOrderStatus: currentOrder?.status || null,
+        lastTrackingTime: latestTracking?.timestamp?.toISOString() || null,
+        lastSpeed: latestTracking?.speed ?? null,
+        lastStatus: latestTracking?.status ?? null,
+        activeOrderId: currentOrder?.id ?? null,
+        activeOrderCustomer: currentOrder?.customerName ?? null,
+        serviceSessionId: activeService?.id ?? null,
+        serviceStartTime: activeService?.serviceStartTime?.toISOString() ?? null,
+        expectedDurationMinutes: activeService?.expectedDurationMinutes ?? null,
       });
     }
     return result;

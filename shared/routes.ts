@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertIssueSchema, employees, orders, issues, beauticianLiveTracking } from './schema';
+import { insertIssueSchema, employees, orders, issues, beauticianLiveTracking, orderServiceSessions } from './schema';
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),
@@ -103,6 +103,50 @@ export const api = {
       },
     },
   },
+  service: {
+    start: {
+      method: 'POST' as const,
+      path: '/api/service/start',
+      input: z.object({
+        orderId: z.number(),
+      }),
+      responses: {
+        200: z.custom<typeof orderServiceSessions.$inferSelect>(),
+        400: errorSchemas.validation,
+      },
+    },
+    stop: {
+      method: 'POST' as const,
+      path: '/api/service/stop',
+      input: z.object({
+        sessionId: z.number(),
+      }),
+      responses: {
+        200: z.custom<typeof orderServiceSessions.$inferSelect>(),
+      },
+    },
+    activeForOrder: {
+      method: 'GET' as const,
+      path: '/api/service/order/:orderId',
+      responses: {
+        200: z.custom<typeof orderServiceSessions.$inferSelect>().nullable(),
+      },
+    },
+    activeForBeautician: {
+      method: 'GET' as const,
+      path: '/api/service/beautician',
+      responses: {
+        200: z.custom<typeof orderServiceSessions.$inferSelect>().nullable(),
+      },
+    },
+    allActive: {
+      method: 'GET' as const,
+      path: '/api/admin/service-sessions',
+      responses: {
+        200: z.array(z.custom<typeof orderServiceSessions.$inferSelect>()),
+      },
+    },
+  },
   orders: {
     list: {
       method: 'GET' as const,
@@ -126,7 +170,7 @@ export const api = {
     updateStatus: {
       method: 'PATCH' as const,
       path: '/api/orders/:id/status',
-      input: z.object({ status: z.enum(['pending', 'confirmed', 'completed', 'cancelled']) }),
+      input: z.object({ status: z.enum(['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']) }),
       responses: {
         200: z.custom<typeof orders.$inferSelect>(),
       },

@@ -1,0 +1,217 @@
+PART 1 — FIX LIVE TRACKING FOR ALL EMPLOYEES (HIGH PRIORITY)
+Current Bug
+
+Admin panel shows live location only for one employee.
+Clicking other employees does not load their location.
+
+REQUIRED FIXES
+⭐ 1 — Employee Click Must Load Latest Location
+
+When admin clicks employee card:
+
+Fetch latest tracking record for that employee
+
+
+API:
+
+GET /tracking/live/{beauticianId}
+
+⭐ 2 — If Employee Has No Active Order
+
+Fallback logic:
+
+Fetch last known location from tracking table
+
+
+Even if:
+
+• Offline
+• Shift ended
+
+Still show last known marker.
+
+⭐ 3 — If Employee Has Active Order
+
+Show:
+
+Latest location
++ Movement trail
++ Current order details
+
+⭐ 4 — Admin Map Behavior
+
+When employee clicked:
+
+Center map on employee
+Zoom level = 15
+Highlight marker
+Display info popup:
+- Beautician Name
+- Order ID
+- Status
+- Last update timestamp
+- Speed
+
+⭐ 5 — Ensure Tracking Records Exist
+
+Add validation:
+
+Tracking must insert record if:
+- Shift active
+- OR Order active
+
+⭐ 6 — Add Real-time Polling
+
+Admin dashboard must refresh tracking every:
+
+10 seconds
+
+⭐ 7 — Add Debug Logging
+
+If location missing:
+
+console.warn("Tracking missing for employee")
+
+
+Show fallback banner:
+
+No recent location available
+
+✅ PART 2 — START SERVICE TIMER FEATURE (SECONDARY)
+⭐ PURPOSE
+
+Track service start time + duration countdown.
+
+⭐ TRIGGER
+
+Add button on Beautician Order Screen:
+
+Start Service
+
+⭐ WHEN BUTTON CLICKED
+
+Save:
+
+service_start_time
+order_id
+beautician_id
+
+
+Store in:
+
+order_service_sessions
+
+⭐ DATABASE SCHEMA
+order_service_sessions
+
+id
+order_id
+beautician_id
+service_start_time
+expected_duration_minutes
+service_end_time
+status
+
+⭐ GET EXPECTED DURATION
+
+Pull from Google Sheets Order Data.
+
+Mapping:
+
+Order → Service Duration column
+
+⭐ UI REQUIREMENTS
+
+After Start Service:
+
+Display LIVE counter:
+
+Service Duration Timer
+
+
+Format:
+
+Elapsed: 00:45:12
+
+⭐ COUNTDOWN WARNING SYSTEM
+
+Show alerts:
+
+When 1 hour remaining → Yellow banner
+When 30 mins remaining → Orange banner
+When time exceeded → Red banner
+
+⭐ TIMER LOGIC
+
+Run front-end interval:
+
+Update every second
+
+⭐ STOP SERVICE BUTTON
+
+When beautician clicks:
+
+Stop Service
+
+
+Save:
+
+service_end_time
+
+⭐ ADMIN PANEL ADDITION
+
+Admin must see:
+
+Current service duration
+Remaining time
+Overtime indicator
+
+✅ PART 3 — SERVICE TIMER + TRACKING LINKING
+
+If service running:
+
+Tracking status must auto update:
+
+status = at_location
+
+✅ PART 4 — SAFETY FAILOVERS
+If Beautician Closes App
+
+Timer must continue using:
+
+server timestamp
+
+
+NOT frontend clock.
+
+If Internet Lost
+
+Cache locally and sync later.
+
+✅ PART 5 — ADMIN DASHBOARD ENHANCEMENT
+
+Add service indicators:
+
+🟢 On Time
+🟡 Near Delay
+🔴 Delayed
+
+⭐ DELIVERABLES REQUIRED
+
+Provide:
+
+Fix employee tracking loading bug
+
+Map centering + marker highlighting
+
+Tracking fallback system
+
+Service start timer UI
+
+Countdown alerts
+
+Timer persistence logic
+
+Admin timer visibility
+
+END PROMPT

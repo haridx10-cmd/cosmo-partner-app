@@ -1,6 +1,6 @@
 import { useOrder, useUpdateOrderStatus } from "@/hooks/use-orders";
 import { useRoute } from "wouter";
-import { Loader2, MapPin, Phone, User, Clock, Navigation, AlertTriangle, CheckCircle, PhoneCall } from "lucide-react";
+import { Loader2, MapPin, Phone, User, Clock, Navigation, AlertTriangle, CheckCircle, PhoneCall, Play, Square, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { IssueModal } from "@/components/IssueModal";
@@ -9,6 +9,9 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { api, buildUrl } from "@shared/routes";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
@@ -26,6 +29,16 @@ type OrderData = {
   longitude?: number | null;
   address?: string | null;
   phone?: string | null;
+};
+
+type ServiceSession = {
+  id: number;
+  orderId: number;
+  beauticianId: number;
+  serviceStartTime: string;
+  expectedDurationMinutes: number;
+  serviceEndTime: string | null;
+  status: string;
 };
 
 function extractCoordsFromMapsUrl(url: string): { lat: number; lng: number } | null {
@@ -120,6 +133,77 @@ function MapPreview({ lat, lng, address }: { lat: number; lng: number; address: 
   );
 }
 
+function formatDuration(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = Math.floor(totalSeconds % 60);
+  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+function ServiceTimer({ session, onStop }: { session: ServiceSession; onStop: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const startTime = new Date(session.serviceStartTime).getTime();
+    const updateElapsed = () => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    };
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 1000);
+    return () => clearInterval(interval);
+  }, [session.serviceStartTime]);
+
+  const expectedSeconds = session.expectedDurationMinutes * 60;
+  const remaining = expectedSeconds - elapsed;
+  const remainingMinutes = remaining / 60;
+
+  let bannerClass = "";
+  let bannerText = "";
+  if (remaining <= 0) {
+    bannerClass = "bg-red-500 text-white";
+    bannerText = `Overtime by ${formatDuration(Math.abs(remaining))}`;
+  } else if (remainingMinutes <= 30) {
+    bannerClass = "bg-orange-500 text-white";
+    bannerText = `${Math.ceil(remainingMinutes)} min remaining`;
+  } else if (remainingMinutes <= 60) {
+    bannerClass = "bg-yellow-500 text-black";
+    bannerText = `${Math.ceil(remainingMinutes)} min remaining`;
+  }
+
+  return (
+    <div className="space-y-3" data-testid="service-timer">
+      {bannerText && (
+        <div className={`p-3 rounded-md text-center font-semibold text-sm ${bannerClass}`} data-testid="timer-warning-banner">
+          <AlertTriangle className="w-4 h-4 inline mr-2" />
+          {bannerText}
+        </div>
+      )}
+
+      <div className="bg-muted/50 p-4 rounded-md text-center border">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <Timer className="w-5 h-5 text-primary" />
+          <span className="text-sm font-medium text-muted-foreground">Service Duration Timer</span>
+        </div>
+        <div className="text-3xl font-mono font-bold tabular-nums" data-testid="text-timer-elapsed">
+          {formatDuration(elapsed)}
+        </div>
+        <div className="text-xs text-muted-foreground mt-1">
+          Expected: {session.expectedDurationMinutes} min
+        </div>
+      </div>
+
+      <Button
+        variant="destructive"
+        className="w-full h-12 font-semibold"
+        onClick={onStop}
+        data-testid="button-stop-service"
+      >
+        <Square className="w-5 h-5 mr-2" /> Stop Service
+      </Button>
+    </div>
+  );
+}
+
 export default function OrderDetailsPage() {
   const [, params] = useRoute("/orders/:id");
   const id = parseInt(params?.id || "0");
@@ -131,6 +215,49 @@ export default function OrderDetailsPage() {
   const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeAttempted, setGeocodeAttempted] = useState(false);
+
+  const { data: activeSession } = useQuery<ServiceSession | null>({
+    queryKey: ['/api/service/order', id],
+    queryFn: async () => {
+      const url = buildUrl(api.service.activeForOrder.path, { orderId: id });
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!id,
+    refetchInterval: 30000,
+  });
+
+  const startService = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest(api.service.start.method, api.service.start.path, { orderId: id });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/service/order', id] });
+      queryClient.invalidateQueries({ queryKey: [api.orders.get.path, id] });
+      toast({ title: "Service Started", description: "Timer is now running." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to start service", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const stopService = useMutation({
+    mutationFn: async () => {
+      if (!activeSession) throw new Error("No active session");
+      const res = await apiRequest(api.service.stop.method, api.service.stop.path, { sessionId: activeSession.id });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/service/order', id] });
+      queryClient.invalidateQueries({ queryKey: [api.orders.get.path, id] });
+      toast({ title: "Service Stopped", description: "Timer has been stopped." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to stop service", description: err.message, variant: "destructive" });
+    },
+  });
 
   const resolvedCoords = useMemo(() => {
     if (order?.latitude && order?.longitude) {
@@ -180,10 +307,19 @@ export default function OrderDetailsPage() {
   if (error || !order) return <div className="h-screen flex items-center justify-center text-destructive" data-testid="error-message">Order not found</div>;
 
   const getNextAction = () => {
+    if (activeSession) {
+      return (
+        <ServiceTimer
+          session={activeSession}
+          onStop={() => stopService.mutate()}
+        />
+      );
+    }
+
     switch (order.status) {
       case 'pending':
         return (
-          <Button 
+          <Button
             className="w-full h-12 text-lg font-semibold"
             onClick={() => updateStatus.mutate({ id, status: 'confirmed' })}
             disabled={updateStatus.isPending}
@@ -193,23 +329,34 @@ export default function OrderDetailsPage() {
           </Button>
         );
       case 'confirmed':
+      case 'in_progress':
         return (
-          <div className="grid grid-cols-2 gap-3">
-             <Button 
-              className="h-12 font-semibold"
-              onClick={() => updateStatus.mutate({ id, status: 'completed' })}
-              data-testid="button-complete-order"
+          <div className="space-y-3">
+            <Button
+              className="w-full h-12 font-semibold"
+              onClick={() => startService.mutate()}
+              disabled={startService.isPending}
+              data-testid="button-start-service"
             >
-              <CheckCircle className="w-5 h-5 mr-2" /> Complete Job
+              <Play className="w-5 h-5 mr-2" /> {startService.isPending ? "Starting..." : "Start Service"}
             </Button>
-            <Button 
-              variant="outline" 
-              className="h-12"
-              onClick={() => setIssueModalOpen(true)}
-              data-testid="button-report-issue"
-            >
-              <AlertTriangle className="w-5 h-5 mr-2" /> Report Issue
-            </Button>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                className="h-12 font-semibold"
+                onClick={() => updateStatus.mutate({ id, status: 'completed' })}
+                data-testid="button-complete-order"
+              >
+                <CheckCircle className="w-5 h-5 mr-2" /> Complete Job
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12"
+                onClick={() => setIssueModalOpen(true)}
+                data-testid="button-report-issue"
+              >
+                <AlertTriangle className="w-5 h-5 mr-2" /> Report Issue
+              </Button>
+            </div>
           </div>
         );
       default:
@@ -224,7 +371,7 @@ export default function OrderDetailsPage() {
           <h1 className="text-2xl font-bold font-display" data-testid="text-order-id">Order #{order.id}</h1>
           <StatusBadge status={order.status} className="text-sm px-3 py-1" />
         </div>
-        
+
         <div className="bg-muted/50 p-5 rounded-md border">
           <div className="flex items-start gap-4 mb-4">
             <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold text-xl shrink-0">
@@ -232,7 +379,7 @@ export default function OrderDetailsPage() {
             </div>
             <div className="min-w-0">
               <h2 className="font-bold text-lg" data-testid="text-customer-name">{order.customerName}</h2>
-              <button 
+              <button
                 onClick={handleCall}
                 className="flex items-center text-muted-foreground text-sm mt-1 hover-elevate rounded-md px-1 -ml-1"
                 data-testid="button-phone-inline"
@@ -267,7 +414,7 @@ export default function OrderDetailsPage() {
 
       <div className="px-5 mb-6">
         <div className="grid grid-cols-2 gap-3">
-          <Button 
+          <Button
             variant="outline"
             className="h-12 font-semibold"
             onClick={handleCall}
@@ -276,7 +423,7 @@ export default function OrderDetailsPage() {
           >
             <PhoneCall className="w-5 h-5 mr-2" /> Call Customer
           </Button>
-          <Button 
+          <Button
             className="h-12 font-semibold"
             onClick={handleNavigation}
             data-testid="button-start-navigation"
@@ -320,10 +467,10 @@ export default function OrderDetailsPage() {
         </div>
       </div>
 
-      <IssueModal 
-        orderId={order.id} 
-        open={issueModalOpen} 
-        onOpenChange={setIssueModalOpen} 
+      <IssueModal
+        orderId={order.id}
+        open={issueModalOpen}
+        onOpenChange={setIssueModalOpen}
       />
     </div>
   );

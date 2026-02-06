@@ -76,7 +76,17 @@ Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SER
 - Admin can view movement trail with polyline visualization
 - 7-day data retention with automatic cleanup every 6 hours
 
+## Service Timer System
+- `order_service_sessions` table tracks service start/stop times, expected duration, order linkage
+- Start/Stop Service button on OrderDetailsPage with live HH:MM:SS countdown
+- Color-coded warning banners: red (overtime), orange (<=30min), yellow (<=60min remaining)
+- Service start auto-sets tracking status to at_location and order status to in_progress
+- Admin TrackingPanel shows service indicators: On Time (green), Near Delay (orange), Delayed (red) badges
+- Admin selected employee details show "Service In Progress" panel with expected duration and start time
+- Offline location caching: LocationTracker stores up to 50 pending GPS updates for retry
+
 ## Recent Changes
+- 2026-02-06: Added Service Timer Management with real-time countdown, delay warnings, admin monitoring
 - 2026-02-06: Implemented Live Beautician Location Tracking with smart intervals, trail visualization, 7-day retention
 - 2026-02-06: Added Smart Location Navigation with maps_url, geocoding fallback, call customer, navigate buttons
 - 2026-02-06: Complete rebuild with custom auth, admin dashboard, GPS tracking, Google Sheets sync
