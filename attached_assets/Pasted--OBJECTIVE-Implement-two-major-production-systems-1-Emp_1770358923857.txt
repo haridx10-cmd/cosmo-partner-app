@@ -1,0 +1,228 @@
+🎯 OBJECTIVE
+
+Implement two major production systems
+
+1️⃣ Employee Authentication + Role Based Access
+2️⃣ Admin Dashboard + Google Sheets Order Sync
+
+🧱 EXISTING STACK
+
+Frontend:
+• React + Shadcn UI
+• Mobile-first PWA
+
+Backend:
+• Node.js (Express or Replit backend)
+• PostgreSQL database (Replit DB)
+
+Maps:
+• Leaflet + OpenStreetMap
+
+⭐ FEATURE 1 — EMPLOYEE LOGIN SYSTEM
+Authentication Requirements
+
+Create login system with roles:
+
+Employee Role
+
+Login using:
+• Mobile Number OR Username
+• Password
+
+Employee can access:
+• Appointment dashboard
+• Order details
+• Raise Issues
+• Start Shift
+• Start Travel (location tracking)
+
+Admin Role
+
+Login using:
+• Email + Password
+
+Admin can access:
+• All employees
+• All orders
+• Issue management console
+• Live tracking dashboard
+
+Database Tables
+employees
+id
+name
+mobile
+username
+password_hash
+role (employee / admin)
+is_online
+current_order_id
+last_location_lat
+last_location_lng
+last_active_time
+
+attendance
+id
+employee_id
+shift_start
+shift_end
+status
+
+⭐ FEATURE 2 — ADMIN CONTROL TERMINAL
+Admin Dashboard Must Include
+🟢 Smooth Orders Panel
+
+Show:
+• Ongoing orders with NO issues
+• Beautician name
+• Order value
+• Customer details
+• Status
+
+🔴 Issues Panel (MOST IMPORTANT)
+
+When employee raises issue:
+
+Display:
+
+• Beautician Name
+• Issue Type
+• Order Value
+• Customer Name
+• Customer Phone
+• Order Address
+• Live GPS location
+• Timestamp
+• Resolution Status
+
+Admin must be able to:
+
+✅ Mark issue resolved
+✅ Contact employee
+✅ Contact customer
+
+🗺️ Live Tracking Panel
+
+Map showing:
+
+• All active beauticians
+• Real-time GPS updates
+• Current order status
+• Color coding:
+Green → Smooth
+Orange → Issue
+Grey → Offline
+
+⭐ FEATURE 3 — GOOGLE SHEETS ORDER SYNC
+Requirement
+
+Orders must automatically import from Google Sheet.
+
+Sheet will contain columns:
+
+Beautician Name
+Customer Name
+Phone
+Address
+Latitude
+Longitude
+Services
+Amount
+Date
+Time
+Status
+
+Matching Logic
+
+Match employee login with order:
+
+IF Sheet.BeauticianName == Employee.name
+Assign order to employee dashboard
+
+Implementation Instructions
+
+Use Google Sheets API.
+
+Create background sync job:
+
+• Runs every 2 minutes
+• Fetch new rows
+• Insert / update orders table
+• Prevent duplicates
+
+orders table
+id
+employee_id
+customer_name
+customer_phone
+address
+latitude
+longitude
+services_json
+amount
+appointment_datetime
+status
+has_issue
+
+issues table
+id
+order_id
+employee_id
+issue_type
+notes
+location_lat
+location_lng
+status
+created_at
+
+⭐ FEATURE 4 — LIVE LOCATION TRACKING
+
+When employee clicks:
+
+"Start Travel"
+
+App must:
+
+• Send GPS every 10 seconds
+• Update employees table location fields
+• Update live tracking dashboard
+
+⭐ UI REQUIREMENTS
+
+Admin dashboard should have:
+
+Tabs:
+
+Overview
+Smooth Orders
+Issues
+Live Tracking
+Employees
+
+⭐ SECURITY
+
+• Passwords hashed with bcrypt
+• Role-based route protection
+• API authentication tokens
+
+⭐ DELIVERABLES REQUIRED
+
+Provide:
+
+1️⃣ Database schema SQL
+2️⃣ Backend API routes
+3️⃣ Admin dashboard UI
+4️⃣ Google Sheets sync service
+5️⃣ Employee login UI
+6️⃣ Location tracking hooks
+
+⭐ DEVELOPMENT STRATEGY
+
+Output in phases:
+
+Phase 1 → Database schema + Auth system
+Phase 2 → Admin dashboard
+Phase 3 → Google Sheets sync
+Phase 4 → Live tracking
+
+Do NOT build everything at once.
