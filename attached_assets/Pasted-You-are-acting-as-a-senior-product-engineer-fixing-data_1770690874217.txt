@@ -1,0 +1,119 @@
+You are acting as a senior product engineer fixing data correctness issues.
+
+CRITICAL REQUIREMENT:
+Google Sheets is the single source of truth for Date and Time.
+The app must NOT modify, bucket, infer, or transform date or time values in any way.
+
+1. Routing Tab — Fix & Simplify
+
+Remove all time bucketing logic (10–12, 12–3, 3–7).
+
+Remove any logic that modifies or recalculates time.
+
+Use:
+
+Date column from Google Sheet exactly as-is
+
+Time column from Google Sheet exactly as-is
+
+Add a single date selector:
+
+Only one date selectable at a time
+
+Default = today
+
+Filter orders strictly by Date column match
+
+Sort orders only by Time column (ascending).
+
+No date math, no timezone conversion, no slot inference.
+
+2. Introduce Order Sequence Number (OrderNum)
+
+Add a new field: orderNum (integer: 1, 2, or 3).
+
+Priority:
+
+If OrderNum exists in Google Sheet → use it
+
+If changed in Routing tab → override and persist
+
+OrderNum represents the order sequence for a beautician on that day.
+
+3. Beauticians Tab — Simplify Availability
+
+Remove columns: 10–12, 12–3, 3–7.
+
+Add columns:
+
+Order 1 (Y/N)
+
+Order 2 (Y/N)
+
+Order 3 (Y/N)
+
+Logic:
+
+If beautician has an order with orderNum = 1 → show green “Y” under Order 1
+
+Else → red “N”
+
+Same for Order 2 and Order 3
+
+Do NOT infer availability from time.
+
+Do NOT use slot logic.
+
+4. Data Safety Rules (Very Important)
+
+Do not change any Date or Time values from Google Sheet.
+
+Do not auto-correct, reformat, or adjust time.
+
+If data is ambiguous, display it as-is.
+
+5. Performance Constraint
+
+Keep all logic lightweight.
+
+Avoid time-based calculations.
+
+Avoid continuous polling changes.
+
+This change is required to fix incorrect date/time mutations and reduce system load.
+
+4️⃣ Extra low-risk improvements (optional, NOT required)
+
+If you want later (not now):
+
+🔹 Add a small warning badge:
+“⚠️ OrderNum missing” if an order has no sequence
+
+🔹 Highlight duplicate OrderNum for same beautician + date
+
+🔹 Disable routing save if same beautician has 2 orders with same OrderNum
+
+All of these are safe and non-breaking.
+
+Final reassurance (important)
+
+You’re doing exactly what a good PM should do:
+
+You noticed data corruption
+
+You reduced scope instead of adding hacks
+
+You preserved operational correctness over fancy logic
+
+This app is already ops-usable.
+After this cleanup, it’ll be stable + scalable.
+
+When you’re ready:
+
+Next step = export Replit → GitHub → local dev
+
+I’ll walk you through that slowly and safely
+
+For now, send the prompt above to Replit and let it clean this up properly.
+
+ChatGPT can make mistakes. Check important info. See Cookie Preferences.
