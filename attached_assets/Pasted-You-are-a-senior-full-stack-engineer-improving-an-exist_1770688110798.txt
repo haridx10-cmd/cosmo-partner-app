@@ -1,0 +1,149 @@
+You are a senior full-stack engineer improving an existing salon employee operations admin panel.
+
+The system already includes:
+• Orders tab
+• Issues tab
+• Tracking tab
+• Team tab
+• Employee app
+
+Your task is to expand the admin panel into an operations command center.
+
+----------------------------------
+
+GLOBAL FEATURE
+
+Add a date range filter at top of admin panel.
+
+Requirements:
+• Allow selecting single date or date range
+• Default = Today
+• Filter must apply to:
+  - Overview tab
+  - Orders tab
+  - Issues tab
+  - Routing tab
+
+----------------------------------
+
+OVERVIEW TAB UPDATES
+
+Add new dashboard metrics:
+
+1. Ongoing Orders Count
+Logic:
+status IN ("confirmed","in_progress")
+AND appointment_date = selected date
+
+2. Issues Count
+Click → Navigate Issues tab
+
+3. Delayed Orders Count
+Logic:
+current_time > appointment_time + 15 minutes
+AND status != completed
+
+Click → Navigate Orders tab with filter
+
+4. Completed Order Value
+Display:
+• Count of completed orders
+• Sum of order value
+
+5. Available Beauticians
+Click → Navigate Beauticians tab
+
+----------------------------------
+
+CREATE NEW TAB → BEAUTICIANS
+
+Purpose: Resource planning
+
+Table Columns:
+
+• Beautician Name
+• Online / Offline / On Job
+• Current GPS location
+• Slot Availability
+   Slot 1 = 10AM–12PM
+   Slot 2 = 12PM–3PM
+   Slot 3 = 3PM–7PM
+
+Slot logic:
+If beautician has order → mark "N"
+If no order → mark "Y"
+If beautician opted out → mark "WND"
+
+• Next Slot Area
+Fetch from next assigned order area
+
+• Last Slot Indicator
+YES if no further orders
+
+----------------------------------
+
+CREATE NEW TAB → ROUTING
+
+Filter:
+Single date only
+
+Sort orders ascending by appointment time
+
+Visually group by:
+Morning (10–11:30)
+Afternoon (11:30–3:30)
+Evening (After 3:30)
+
+Table columns:
+
+• Customer Phone
+Enable click-to-call
+
+• Appointment Time
+• Location with Google Maps deep link
+• Order Value
+• Services list
+• Assigned Beautician
+
+• Routing Dropdown
+Modes:
+1. Actual Routing → updates database and employee app
+2. Route Simulator → local UI only
+
+• Acceptance Status
+Reuse existing logic from Orders tab
+
+• Order Status
+Show delayed / ongoing / cancelled
+
+----------------------------------
+
+TEAM TAB UPDATE
+
+Add click-to-call functionality for employees.
+
+----------------------------------
+
+DATABASE CHANGES
+
+Extend Orders table with:
+
+beauticianHomeArea
+orderAreaName
+acceptanceStatus
+
+----------------------------------
+
+PERFORMANCE RULES
+
+Avoid heavy map distance calculations.
+Reuse tracking data instead of recalculating location repeatedly.
+Use indexed queries on appointment_date and beauticianName.
+
+----------------------------------
+
+UI REQUIREMENTS
+
+Use clean responsive tables.
+Avoid heavy real-time subscriptions except tracking tab.
+Ensure routing updates immediately reflect in employee panel.
