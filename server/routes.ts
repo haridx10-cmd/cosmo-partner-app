@@ -251,18 +251,34 @@ export async function registerRoutes(
   // === ADMIN ROUTES ===
 
   app.get(api.admin.overview.path, requireAdmin, async (req, res) => {
-    const stats = await storage.getOverviewStats();
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : (() => { const d = new Date(); d.setHours(23,59,59,999); return d; })();
+    const stats = await storage.getOverviewStatsFiltered(startDate, endDate);
     res.json(stats);
   });
 
   app.get(api.admin.allOrders.path, requireAdmin, async (req, res) => {
-    const allOrders = await storage.getAllOrders();
-    res.json(allOrders);
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+    if (startDate && endDate) {
+      const allOrders = await storage.getAllOrdersFiltered(startDate, endDate);
+      res.json(allOrders);
+    } else {
+      const allOrders = await storage.getAllOrders();
+      res.json(allOrders);
+    }
   });
 
   app.get(api.admin.allIssues.path, requireAdmin, async (req, res) => {
-    const allIssues = await storage.getAllIssues();
-    res.json(allIssues);
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+    if (startDate && endDate) {
+      const allIssues = await storage.getAllIssuesFiltered(startDate, endDate);
+      res.json(allIssues);
+    } else {
+      const allIssues = await storage.getAllIssues();
+      res.json(allIssues);
+    }
   });
 
   app.patch(api.admin.resolveIssue.path, requireAdmin, async (req, res) => {
@@ -313,6 +329,34 @@ export async function registerRoutes(
     const orderId = Number(req.params.orderId);
     const history = await storage.getTrackingHistoryForOrder(orderId);
     res.json(history);
+  });
+
+  // Beauticians resource planning
+  app.get('/api/admin/beauticians', requireAdmin, async (req, res) => {
+    const date = req.query.date ? new Date(req.query.date as string) : new Date();
+    const data = await storage.getBeauticiansData(date);
+    res.json(data);
+  });
+
+  // Routing data
+  app.get('/api/admin/routing', requireAdmin, async (req, res) => {
+    const date = req.query.date ? new Date(req.query.date as string) : new Date();
+    const data = await storage.getRoutingData(date);
+    res.json(data);
+  });
+
+  // Update order acceptance status
+  app.patch('/api/admin/orders/:id/acceptance', requireAdmin, async (req, res) => {
+    try {
+      const orderId = Number(req.params.id);
+      const { status } = req.body;
+      if (!status) return res.status(400).json({ message: "Status is required" });
+      const updated = await storage.updateOrderAcceptanceStatus(orderId, status);
+      if (!updated) return res.status(404).json({ message: "Order not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to update acceptance status" });
+    }
   });
 
   app.post(api.admin.syncSheets.path, requireAdmin, async (req, res) => {

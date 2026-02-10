@@ -9,13 +9,25 @@ import { User, MapPin, Clock, CreditCard } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-export default function SmoothOrdersPanel() {
+interface SmoothOrdersPanelProps {
+  dateRange?: { from: Date; to: Date };
+}
+
+export default function SmoothOrdersPanel({ dateRange }: SmoothOrdersPanelProps) {
   const { toast } = useToast();
 
   const { data, isLoading } = useQuery({
-    queryKey: [api.admin.allOrders.path],
+    queryKey: [api.admin.allOrders.path, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
     queryFn: async () => {
-      const res = await fetch(api.admin.allOrders.path, { credentials: "include" });
+      let url = api.admin.allOrders.path;
+      if (dateRange) {
+        const params = new URLSearchParams({
+          startDate: dateRange.from.toISOString(),
+          endDate: dateRange.to.toISOString(),
+        });
+        url += `?${params}`;
+      }
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch orders");
       return res.json();
     },

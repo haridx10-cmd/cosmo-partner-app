@@ -8,14 +8,26 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { AlertTriangle, CheckCircle, Phone, MapPin, Clock, User } from "lucide-react";
 
-export default function IssuesPanel() {
+interface IssuesPanelProps {
+  dateRange?: { from: Date; to: Date };
+}
+
+export default function IssuesPanel({ dateRange }: IssuesPanelProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const { data, isLoading } = useQuery({
-    queryKey: [api.admin.allIssues.path],
+    queryKey: [api.admin.allIssues.path, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
     queryFn: async () => {
-      const res = await fetch(api.admin.allIssues.path, { credentials: "include" });
+      let url = api.admin.allIssues.path;
+      if (dateRange) {
+        const params = new URLSearchParams({
+          startDate: dateRange.from.toISOString(),
+          endDate: dateRange.to.toISOString(),
+        });
+        url += `?${params}`;
+      }
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch issues");
       return res.json();
     },

@@ -48,7 +48,13 @@ export const orders = pgTable("orders", {
   employeeId: integer("employee_id").references(() => employees.id),
   hasIssue: boolean("has_issue").default(false),
   sheetRowId: text("sheet_row_id"),
-});
+  beauticianHomeArea: text("beautician_home_area"),
+  orderAreaName: text("order_area_name"),
+  acceptanceStatus: text("acceptance_status").default("pending"),
+}, (table) => [
+  index("idx_orders_appointment_time").on(table.appointmentTime),
+  index("idx_orders_employee").on(table.employeeId),
+]);
 
 // === ISSUES TABLE ===
 export const issues = pgTable("issues", {

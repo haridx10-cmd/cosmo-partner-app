@@ -28,7 +28,9 @@ Production-grade salon-at-home employee management system with custom authentica
 - `client/src/hooks/use-beautician.ts` - Employee shift/location/issue hooks
 - `client/src/hooks/use-orders.ts` - Order management hooks
 - `client/src/pages/LoginPage.tsx` - Custom login (mobile/username/email + password)
-- `client/src/pages/admin/AdminDashboard.tsx` - Admin panel with 5 tabs
+- `client/src/pages/admin/AdminDashboard.tsx` - Admin panel with 7 tabs (Overview, Orders, Issues, Beauticians, Routing, Tracking, Team)
+- `client/src/pages/admin/BeauticiansPanel.tsx` - Beautician resource planning with slot availability
+- `client/src/pages/admin/RoutingPanel.tsx` - Order routing with time grouping and assignment
 - `client/src/components/LocationTracker.tsx` - Smart GPS tracking (dynamic intervals: 15s traveling, 60s at location/idle)
 
 ## Demo Credentials
@@ -48,11 +50,14 @@ Production-grade salon-at-home employee management system with custom authentica
 - GET `/api/orders` - Employee's orders
 - PATCH `/api/orders/:id/status` - Update order status
 - POST `/api/issues` - Report issue
-- GET `/api/admin/overview` - Dashboard stats
-- GET `/api/admin/orders` - All orders
-- GET `/api/admin/issues` - All issues
+- GET `/api/admin/overview?startDate&endDate` - Dashboard stats (date-filtered)
+- GET `/api/admin/orders?startDate&endDate` - All orders (date-filtered)
+- GET `/api/admin/issues?startDate&endDate` - All issues (date-filtered)
 - PATCH `/api/admin/issues/:id/resolve` - Resolve issue
 - GET `/api/admin/employees` - All employees
+- GET `/api/admin/beauticians?date` - Beautician resource planning data
+- GET `/api/admin/routing?date` - Routing data for a date
+- PATCH `/api/admin/orders/:id/acceptance` - Update order acceptance status
 - GET `/api/admin/tracking` - Live tracking data
 - POST `/api/admin/sync-sheets` - Manual Google Sheets sync
 
@@ -85,7 +90,16 @@ Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SER
 - Admin selected employee details show "Service In Progress" panel with expected duration and start time
 - Offline location caching: LocationTracker stores up to 50 pending GPS updates for retry
 
+## Admin Operations Command Center
+- Global date range filter at top of admin panel (Today/Yesterday/Last 7 days/custom date)
+- Overview tab: Ongoing orders, open issues (click → Issues), delayed orders (click → Orders), completed value (count + sum), available beauticians (click → Beauticians), total employees, active now
+- Beauticians tab: Resource planning table with slot availability (10-12, 12-3, 3-7), online/offline/on-job status, GPS location, next slot area, last slot indicator
+- Routing tab: Date-filtered orders grouped by Morning/Afternoon/Evening, click-to-call, Google Maps deep links, beautician assignment with Actual Routing vs Route Simulator modes, acceptance status, order status with delay detection
+- Team tab: Click-to-call on employee phone numbers
+- Orders table extended: beauticianHomeArea, orderAreaName, acceptanceStatus fields
+
 ## Recent Changes
+- 2026-02-10: Expanded admin panel into operations command center with global date filter, Beauticians tab, Routing tab, enhanced Overview tab, click-to-call
 - 2026-02-06: Added Service Timer Management with real-time countdown, delay warnings, admin monitoring
 - 2026-02-06: Implemented Live Beautician Location Tracking with smart intervals, trail visualization, 7-day retention
 - 2026-02-06: Added Smart Location Navigation with maps_url, geocoding fallback, call customer, navigate buttons

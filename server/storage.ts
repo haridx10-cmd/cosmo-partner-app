@@ -53,6 +53,23 @@ export interface IStorage {
   getAllEmployees(): Promise<Employee[]>;
   getOverviewStats(): Promise<{ totalEmployees: number; activeEmployees: number; totalOrders: number; openIssues: number; completedToday: number }>;
   getTrackingData(): Promise<{ id: number; name: string; isOnline: boolean | null; currentLatitude: number | null; currentLongitude: number | null; hasActiveIssue: boolean; currentOrderStatus: string | null; lastTrackingTime: string | null; lastSpeed: number | null; lastStatus: string | null; activeOrderId: number | null; activeOrderCustomer: string | null; serviceSessionId: number | null; serviceStartTime: string | null; expectedDurationMinutes: number | null }[]>;
+
+  // Date-filtered admin methods
+  getOverviewStatsFiltered(startDate: Date, endDate: Date): Promise<{
+    totalEmployees: number;
+    activeEmployees: number;
+    ongoingOrders: number;
+    openIssues: number;
+    delayedOrders: number;
+    completedOrders: number;
+    completedValue: number;
+    availableBeauticians: number;
+  }>;
+  getAllOrdersFiltered(startDate: Date, endDate: Date): Promise<{ order: Order; employeeName: string | null }[]>;
+  getAllIssuesFiltered(startDate: Date, endDate: Date): Promise<{ issue: Issue; employeeName: string | null; orderDetails: Order | null }[]>;
+  getBeauticiansData(date: Date): Promise<{ id: number; name: string; mobile: string | null; status: string; latitude: number | null; longitude: number | null; slot1: string; slot2: string; slot3: string; nextSlotArea: string | null; lastSlot: boolean; totalOrders: number }[]>;
+  getRoutingData(date: Date): Promise<any[]>;
+  updateOrderAcceptanceStatus(id: number, status: string): Promise<Order>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -333,6 +350,165 @@ export class DatabaseStorage implements IStorage {
       });
     }
     return result;
+  }
+
+  async getOverviewStatsFiltered(startDate: Date, endDate: Date) {
+    const [empCount] = await db.select({ count: sql<number>`count(*)::int` }).from(employees).where(eq(employees.role, 'employee'));
+    const [activeCount] = await db.select({ count: sql<number>`count(*)::int` }).from(employees).where(and(eq(employees.isOnline, true), eq(employees.role, 'employee')));
+
+    const [ongoingCount] = await db.select({ count: sql<number>`count(*)::int` }).from(orders)
+      .where(and(
+        or(eq(orders.status, 'confirmed'), eq(orders.status, 'in_progress')),
+        gte(orders.appointmentTime, startDate),
+        lte(orders.appointmentTime, endDate)
+      ));
+
+    const [issueCount] = await db.select({ count: sql<number>`count(*)::int` }).from(issues)
+      .where(and(eq(issues.status, 'open'), gte(issues.createdAt, startDate), lte(issues.createdAt, endDate)));
+
+    const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const [delayedCount] = await db.select({ count: sql<number>`count(*)::int` }).from(orders)
+      .where(and(
+        lte(orders.appointmentTime, fifteenMinsAgo),
+        sql`${orders.status} != 'completed'`,
+        sql`${orders.status} != 'cancelled'`,
+        gte(orders.appointmentTime, startDate),
+        lte(orders.appointmentTime, endDate)
+      ));
+
+    const [completedStats] = await db.select({
+      count: sql<number>`count(*)::int`,
+      totalValue: sql<number>`COALESCE(sum(${orders.amount}), 0)::int`
+    }).from(orders).where(and(
+      eq(orders.status, 'completed'),
+      gte(orders.appointmentTime, startDate),
+      lte(orders.appointmentTime, endDate)
+    ));
+
+    const [availableCount] = await db.select({ count: sql<number>`count(*)::int` }).from(employees)
+      .where(and(
+        eq(employees.role, 'employee'),
+        eq(employees.isOnline, true),
+        sql`${employees.id} NOT IN (SELECT employee_id FROM orders WHERE status = 'in_progress' AND employee_id IS NOT NULL)`
+      ));
+
+    return {
+      totalEmployees: empCount.count,
+      activeEmployees: activeCount.count,
+      ongoingOrders: ongoingCount.count,
+      openIssues: issueCount.count,
+      delayedOrders: delayedCount.count,
+      completedOrders: completedStats.count,
+      completedValue: completedStats.totalValue,
+      availableBeauticians: availableCount.count,
+    };
+  }
+
+  async getAllOrdersFiltered(startDate: Date, endDate: Date) {
+    const rows = await db.select({
+      order: orders,
+      employeeName: employees.name
+    }).from(orders)
+      .leftJoin(employees, eq(orders.employeeId, employees.id))
+      .where(and(gte(orders.appointmentTime, startDate), lte(orders.appointmentTime, endDate)))
+      .orderBy(desc(orders.appointmentTime));
+    return rows;
+  }
+
+  async getAllIssuesFiltered(startDate: Date, endDate: Date) {
+    const rows = await db.select({
+      issue: issues,
+      employeeName: employees.name,
+      orderDetails: orders
+    }).from(issues)
+      .leftJoin(employees, eq(issues.employeeId, employees.id))
+      .leftJoin(orders, eq(issues.orderId, orders.id))
+      .where(and(gte(issues.createdAt, startDate), lte(issues.createdAt, endDate)))
+      .orderBy(desc(issues.createdAt));
+    return rows;
+  }
+
+  async getBeauticiansData(date: Date) {
+    const emps = await db.select().from(employees).where(eq(employees.role, 'employee'));
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const dayOrders = await db.select({
+      order: orders,
+      employeeName: employees.name,
+    }).from(orders)
+      .leftJoin(employees, eq(orders.employeeId, employees.id))
+      .where(and(gte(orders.appointmentTime, dayStart), lte(orders.appointmentTime, dayEnd)));
+
+    return emps.map(emp => {
+      const empOrders = dayOrders.filter(o => o.order.employeeId === emp.id);
+      const activeOrder = empOrders.find(o => o.order.status === 'in_progress');
+
+      let status = emp.isOnline ? 'online' : 'offline';
+      if (activeOrder) status = 'on_job';
+
+      const getSlot = (slotStart: number, slotEnd: number) => {
+        const hasOrder = empOrders.some(o => {
+          const h = new Date(o.order.appointmentTime).getHours();
+          return h >= slotStart && h < slotEnd;
+        });
+        return hasOrder ? 'N' : 'Y';
+      };
+
+      const slot1 = getSlot(10, 12);
+      const slot2 = getSlot(12, 15);
+      const slot3 = getSlot(15, 19);
+
+      const now = new Date();
+      const futureOrders = empOrders
+        .filter(o => new Date(o.order.appointmentTime) > now)
+        .sort((a, b) => new Date(a.order.appointmentTime).getTime() - new Date(b.order.appointmentTime).getTime());
+      const nextOrder = futureOrders[0];
+
+      const lastSlot = futureOrders.length <= 1;
+
+      return {
+        id: emp.id,
+        name: emp.name,
+        mobile: emp.mobile,
+        status,
+        latitude: emp.currentLatitude,
+        longitude: emp.currentLongitude,
+        slot1,
+        slot2,
+        slot3,
+        nextSlotArea: nextOrder?.order.orderAreaName || nextOrder?.order.address || null,
+        lastSlot,
+        totalOrders: empOrders.length,
+      };
+    });
+  }
+
+  async getRoutingData(date: Date) {
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const rows = await db.select({
+      order: orders,
+      employeeName: employees.name,
+    }).from(orders)
+      .leftJoin(employees, eq(orders.employeeId, employees.id))
+      .where(and(gte(orders.appointmentTime, dayStart), lte(orders.appointmentTime, dayEnd)))
+      .orderBy(orders.appointmentTime);
+
+    return rows.map(r => ({
+      ...r.order,
+      employeeName: r.employeeName,
+    }));
+  }
+
+  async updateOrderAcceptanceStatus(id: number, status: string) {
+    const [updated] = await db.update(orders).set({ acceptanceStatus: status }).where(eq(orders.id, id)).returning();
+    return updated;
   }
 }
 

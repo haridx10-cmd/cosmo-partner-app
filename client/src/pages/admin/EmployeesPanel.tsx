@@ -75,7 +75,11 @@ export default function EmployeesPanel() {
             <div className="flex-1 min-w-0">
               <div className="font-medium text-gray-900 truncate">{emp.name}</div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                {emp.mobile && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{emp.mobile}</span>}
+                {emp.mobile && (
+                  <a href={`tel:${emp.mobile}`} className="flex items-center gap-1 text-primary" data-testid={`link-call-employee-${emp.id}`}>
+                    <Phone className="w-3 h-3" />{emp.mobile}
+                  </a>
+                )}
                 {emp.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{emp.email}</span>}
                 {emp.username && <span className="flex items-center gap-1"><User className="w-3 h-3" />@{emp.username}</span>}
               </div>
