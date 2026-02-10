@@ -62,7 +62,7 @@ Production-grade salon-at-home employee management system with custom authentica
 - POST `/api/admin/sync-sheets` - Manual Google Sheets sync
 
 ## Google Sheets Integration
-Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SERVICE_ACCOUNT_JSON` for automatic 2-minute sync. Expected sheet columns: CustomerName, Phone, Address, Services, Amount, Date, Time, PaymentMode, EmployeeName, MapsURL (column J optional).
+Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SERVICE_ACCOUNT_JSON` for automatic 2-minute sync. Expected sheet columns: CustomerName, Phone, Address, Services, Amount, Date, Time, PaymentMode, EmployeeName, MapsURL (column J optional), OrderNum (column K optional, integer 1/2/3).
 
 ## Smart Navigation System
 - Orders have `maps_url` field for Google Maps links
@@ -93,12 +93,14 @@ Set env vars `GOOGLE_SHEET_ID` and either `GOOGLE_SHEETS_API_KEY` or `GOOGLE_SER
 ## Admin Operations Command Center
 - Global date range filter at top of admin panel (Today/Yesterday/Last 7 days/custom date)
 - Overview tab: Ongoing orders, open issues (click → Issues), delayed orders (click → Orders), completed value (count + sum), available beauticians (click → Beauticians), total employees, active now
-- Beauticians tab: Resource planning table with slot availability (10-12, 12-3, 3-7), online/offline/on-job status, GPS location, next slot area, last slot indicator
-- Routing tab: Date-filtered orders grouped by Morning/Afternoon/Evening, click-to-call, Google Maps deep links, beautician assignment with Actual Routing vs Route Simulator modes, acceptance status, order status with delay detection
+- Beauticians tab: Resource planning table with Order 1/2/3 availability (Y/N based on orderNum), online/offline/on-job status, GPS location, next area, last slot indicator
+- Routing tab: Flat date-filtered order table sorted by time ascending, raw date/time display from Google Sheets, orderNum dropdown (1/2/3), click-to-call, Google Maps deep links, beautician assignment with Actual Routing vs Route Simulator modes, acceptance status
 - Team tab: Click-to-call on employee phone numbers
-- Orders table extended: beauticianHomeArea, orderAreaName, acceptanceStatus fields
+- Orders table extended: orderNum, beauticianHomeArea, orderAreaName, acceptanceStatus fields
+- PATCH `/api/admin/orders/:id/order-num` - Update order sequence number
 
 ## Recent Changes
+- 2026-02-10: Simplified Routing/Beauticians tabs - removed time bucketing, added orderNum field, raw date/time display from Google Sheets
 - 2026-02-10: Expanded admin panel into operations command center with global date filter, Beauticians tab, Routing tab, enhanced Overview tab, click-to-call
 - 2026-02-06: Added Service Timer Management with real-time countdown, delay warnings, admin monitoring
 - 2026-02-06: Implemented Live Beautician Location Tracking with smart intervals, trail visualization, 7-day retention

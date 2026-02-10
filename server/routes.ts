@@ -359,6 +359,21 @@ export async function registerRoutes(
     }
   });
 
+  app.patch('/api/admin/orders/:id/order-num', requireAdmin, async (req, res) => {
+    try {
+      const orderId = Number(req.params.id);
+      const { orderNum } = req.body;
+      if (orderNum !== null && (orderNum < 1 || orderNum > 3)) {
+        return res.status(400).json({ message: "OrderNum must be 1, 2, 3, or null" });
+      }
+      const updated = await storage.updateOrderNum(orderId, orderNum ?? null);
+      if (!updated) return res.status(404).json({ message: "Order not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to update order number" });
+    }
+  });
+
   app.post(api.admin.syncSheets.path, requireAdmin, async (req, res) => {
     try {
       const { sheetId, range } = req.body;

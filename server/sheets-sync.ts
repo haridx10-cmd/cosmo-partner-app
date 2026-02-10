@@ -15,6 +15,7 @@ interface SheetRow {
   paymentMode: string;
   employeeName: string;
   mapsUrl: string;
+  orderNum: number | null;
 }
 
 function parseServices(servicesStr: string): { name: string; price: number }[] {
@@ -126,6 +127,9 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
     const embeddedUrl = extractMapsUrlFromText(address);
     if (embeddedUrl) mapsUrl = embeddedUrl;
   }
+  const rawOrderNum = row[10]?.trim();
+  const orderNum = rawOrderNum ? parseInt(rawOrderNum) : null;
+
   return {
     rowIndex,
     customerName: row[0]?.trim() || "",
@@ -138,10 +142,11 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
     paymentMode: row[7]?.trim() || "cash",
     employeeName: row[8]?.trim() || "",
     mapsUrl,
+    orderNum: orderNum && !isNaN(orderNum) ? orderNum : null,
   };
 }
 
-export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:J"): Promise<{ imported: number; updated: number; errors: number }> {
+export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:K"): Promise<{ imported: number; updated: number; errors: number }> {
   const result = { imported: 0, updated: 0, errors: 0 };
 
   const rows = await getSheetData(sheetId, range);
@@ -179,7 +184,7 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
 
       const existing = await storage.getOrderBySheetRowId(sheetRowId);
       if (existing) {
-        await storage.updateOrder(existing.id, {
+        const updateData: any = {
           customerName: sheetRow.customerName,
           phone: sheetRow.phone,
           address: sheetRow.address,
@@ -191,7 +196,13 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           appointmentTime,
           paymentMode: sheetRow.paymentMode,
           employeeId,
-        });
+          sheetDate: sheetRow.appointmentDate,
+          sheetTime: sheetRow.appointmentTime,
+        };
+        if (sheetRow.orderNum !== null && existing.orderNum === null) {
+          updateData.orderNum = sheetRow.orderNum;
+        }
+        await storage.updateOrder(existing.id, updateData);
         result.updated++;
       } else {
         await storage.createOrder({
@@ -209,6 +220,9 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           status: "pending",
           employeeId,
           sheetRowId,
+          sheetDate: sheetRow.appointmentDate,
+          sheetTime: sheetRow.appointmentTime,
+          orderNum: sheetRow.orderNum,
         });
         result.imported++;
       }

@@ -67,9 +67,10 @@ export interface IStorage {
   }>;
   getAllOrdersFiltered(startDate: Date, endDate: Date): Promise<{ order: Order; employeeName: string | null }[]>;
   getAllIssuesFiltered(startDate: Date, endDate: Date): Promise<{ issue: Issue; employeeName: string | null; orderDetails: Order | null }[]>;
-  getBeauticiansData(date: Date): Promise<{ id: number; name: string; mobile: string | null; status: string; latitude: number | null; longitude: number | null; slot1: string; slot2: string; slot3: string; nextSlotArea: string | null; lastSlot: boolean; totalOrders: number }[]>;
+  getBeauticiansData(date: Date): Promise<{ id: number; name: string; mobile: string | null; status: string; latitude: number | null; longitude: number | null; order1: string; order2: string; order3: string; nextSlotArea: string | null; lastSlot: boolean; totalOrders: number }[]>;
   getRoutingData(date: Date): Promise<any[]>;
   updateOrderAcceptanceStatus(id: number, status: string): Promise<Order>;
+  updateOrderNum(id: number, orderNum: number | null): Promise<Order>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -449,17 +450,9 @@ export class DatabaseStorage implements IStorage {
       let status = emp.isOnline ? 'online' : 'offline';
       if (activeOrder) status = 'on_job';
 
-      const getSlot = (slotStart: number, slotEnd: number) => {
-        const hasOrder = empOrders.some(o => {
-          const h = new Date(o.order.appointmentTime).getHours();
-          return h >= slotStart && h < slotEnd;
-        });
-        return hasOrder ? 'N' : 'Y';
-      };
-
-      const slot1 = getSlot(10, 12);
-      const slot2 = getSlot(12, 15);
-      const slot3 = getSlot(15, 19);
+      const order1 = empOrders.some(o => o.order.orderNum === 1) ? 'Y' : 'N';
+      const order2 = empOrders.some(o => o.order.orderNum === 2) ? 'Y' : 'N';
+      const order3 = empOrders.some(o => o.order.orderNum === 3) ? 'Y' : 'N';
 
       const now = new Date();
       const futureOrders = empOrders
@@ -476,9 +469,9 @@ export class DatabaseStorage implements IStorage {
         status,
         latitude: emp.currentLatitude,
         longitude: emp.currentLongitude,
-        slot1,
-        slot2,
-        slot3,
+        order1,
+        order2,
+        order3,
         nextSlotArea: nextOrder?.order.orderAreaName || nextOrder?.order.address || null,
         lastSlot,
         totalOrders: empOrders.length,
@@ -508,6 +501,11 @@ export class DatabaseStorage implements IStorage {
 
   async updateOrderAcceptanceStatus(id: number, status: string) {
     const [updated] = await db.update(orders).set({ acceptanceStatus: status }).where(eq(orders.id, id)).returning();
+    return updated;
+  }
+
+  async updateOrderNum(id: number, orderNum: number | null) {
+    const [updated] = await db.update(orders).set({ orderNum }).where(eq(orders.id, id)).returning();
     return updated;
   }
 }

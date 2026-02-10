@@ -15,22 +15,23 @@ type Beautician = {
   status: string;
   latitude: number | null;
   longitude: number | null;
-  slot1: string;
-  slot2: string;
-  slot3: string;
+  order1: string;
+  order2: string;
+  order3: string;
   nextSlotArea: string | null;
   lastSlot: boolean;
   totalOrders: number;
 };
 
-function SlotCell({ value }: { value: string }) {
-  const colors: Record<string, string> = {
-    Y: "bg-green-100 text-green-800",
-    N: "bg-red-100 text-red-800",
-    WND: "bg-gray-100 text-gray-500",
-  };
+function OrderCell({ value }: { value: string }) {
+  const isYes = value === "Y";
   return (
-    <span className={`inline-flex items-center justify-center w-10 h-6 rounded text-xs font-semibold ${colors[value] || colors.WND}`}>
+    <span
+      className={`inline-flex items-center justify-center w-10 h-6 rounded text-xs font-semibold ${
+        isYes ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+      }`}
+      data-testid={`cell-order-${isYes ? "yes" : "no"}`}
+    >
       {value}
     </span>
   );
@@ -64,7 +65,7 @@ export default function BeauticiansPanel({ dateRange }: BeauticiansPanelProps) {
   return (
     <div className="space-y-4 mt-4" data-testid="beauticians-panel">
       <div className="flex justify-between items-center flex-wrap gap-2">
-        <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+        <h3 className="font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
           <Scissors className="w-4 h-4" />
           Beauticians ({(beauticians || []).length})
         </h3>
@@ -79,9 +80,9 @@ export default function BeauticiansPanel({ dateRange }: BeauticiansPanelProps) {
                   <th className="text-left p-3 font-medium text-muted-foreground text-xs">Name</th>
                   <th className="text-left p-3 font-medium text-muted-foreground text-xs">Status</th>
                   <th className="text-left p-3 font-medium text-muted-foreground text-xs">Location</th>
-                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">10-12</th>
-                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">12-3</th>
-                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">3-7</th>
+                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">Order 1</th>
+                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">Order 2</th>
+                  <th className="text-center p-3 font-medium text-muted-foreground text-xs">Order 3</th>
                   <th className="text-left p-3 font-medium text-muted-foreground text-xs">Next Area</th>
                   <th className="text-center p-3 font-medium text-muted-foreground text-xs">Last Slot</th>
                 </tr>
@@ -90,7 +91,7 @@ export default function BeauticiansPanel({ dateRange }: BeauticiansPanelProps) {
                 {(beauticians || []).map((b) => (
                   <tr key={b.id} className="border-b last:border-0 hover-elevate" data-testid={`row-beautician-${b.id}`}>
                     <td className="p-3">
-                      <div className="font-medium text-gray-900">{b.name}</div>
+                      <div className="font-medium text-gray-900 dark:text-gray-100">{b.name}</div>
                       {b.mobile && (
                         <a
                           href={`tel:${b.mobile}`}
@@ -121,11 +122,11 @@ export default function BeauticiansPanel({ dateRange }: BeauticiansPanelProps) {
                         <span className="text-xs text-muted-foreground">N/A</span>
                       )}
                     </td>
-                    <td className="p-3 text-center"><SlotCell value={b.slot1} /></td>
-                    <td className="p-3 text-center"><SlotCell value={b.slot2} /></td>
-                    <td className="p-3 text-center"><SlotCell value={b.slot3} /></td>
+                    <td className="p-3 text-center"><OrderCell value={b.order1} /></td>
+                    <td className="p-3 text-center"><OrderCell value={b.order2} /></td>
+                    <td className="p-3 text-center"><OrderCell value={b.order3} /></td>
                     <td className="p-3">
-                      <span className="text-xs text-gray-700 max-w-[140px] truncate block">
+                      <span className="text-xs text-gray-700 dark:text-gray-300 max-w-[140px] truncate block">
                         {b.nextSlotArea || "-"}
                       </span>
                     </td>
