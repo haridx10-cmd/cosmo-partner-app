@@ -16,22 +16,44 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   // === SESSION SETUP ===
+  // === SESSION SETUP ===
+
+if (process.env.DATABASE_URL) {
   const pgStore = connectPg(session);
-  app.use(session({
-    store: new pgStore({
-      conString: process.env.DATABASE_URL,
-      createTableIfMissing: true,
-      tableName: "sessions",
-    }),
-    secret: process.env.SESSION_SECRET || "salon-at-home-secret-key",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: false,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    },
-  }));
+
+  app.use(
+    session({
+      store: new pgStore({
+        conString: process.env.DATABASE_URL,
+        createTableIfMissing: true,
+        tableName: "sessions",
+      }),
+      secret: process.env.SESSION_SECRET || "salon-at-home-secret-key",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: false,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
+    })
+  );
+} else {
+  console.log("⚠️ Using Memory Session Store (local dev)");
+
+  app.use(
+    session({
+      secret: "dev-secret-key",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: false,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
+    })
+  );
+}
 
   // === AUTH MIDDLEWARE ===
   const requireAuth: RequestHandler = (req: any, res, next) => {
@@ -65,8 +87,8 @@ export async function registerRoutes(
 
   // === AUTH ROUTES ===
 
-  app.post(api.auth.login.path, async (req, res) => {
-    try {
+  /*app.post(api.auth.login.path, async (req, res) => {
+    /try {
       const { identifier, password } = api.auth.login.input.parse(req.body);
       const emp = await storage.findEmployeeByIdentifier(identifier);
       if (!emp) return res.status(401).json({ message: "Invalid credentials" });
@@ -79,7 +101,46 @@ export async function registerRoutes(
     } catch (err) {
       res.status(400).json({ message: "Invalid request" });
     }
+  });*/
+
+  app.post(api.auth.login.path, async (req: any, res) => {
+    try {
+      const { identifier, password } = req.body;
+  
+      // DEV LOGIN (no DB required)
+      if (identifier === "admin" && password === "admin123") {
+        req.session.employeeId = 1;
+        req.session.role = "admin";
+  
+        return res.json({
+          employee: {
+            id: 1,
+            name: "Admin User",
+            role: "admin",
+          },
+        });
+      }
+  
+      if (identifier === "priya" && password === "1234") {
+        req.session.employeeId = 2;
+        req.session.role = "employee";
+  
+        return res.json({
+          employee: {
+            id: 2,
+            name: "Priya Sharma",
+            role: "employee",
+          },
+        });
+      }
+  
+      return res.status(401).json({ message: "Invalid credentials" });
+  
+    } catch (err) {
+      return res.status(400).json({ message: "Invalid request" });
+    }
   });
+  
 
   app.get(api.auth.me.path, async (req: any, res) => {
     if (!req.session?.employeeId) return res.status(401).json({ message: "Not logged in" });
@@ -386,8 +447,12 @@ export async function registerRoutes(
   });
 
   // Seed on startup
-  await seedDatabase();
-
+  if (process.env.DATABASE_URL) {
+    await seedDatabase();
+  } else {
+    console.log("⚠️ Skipping seedDatabase() in local (no DB).");
+  }
+  
   // Start periodic Google Sheets sync if configured
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (sheetId) {
