@@ -1,68 +1,69 @@
-import { Wallet, TrendingUp, CreditCard, ArrowUpRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Wallet, BarChart3, ListChecks } from "lucide-react";
+import { api } from "@shared/routes";
+
+type WalletMonthly = {
+  completedOrders: number;
+  totalRevenue: number;
+  totalCommission: number;
+  serviceBreakdown: Array<{ serviceName: string; count: number }>;
+};
 
 export default function WalletPage() {
+  const { data, isLoading } = useQuery<WalletMonthly>({
+    queryKey: [api.wallet.monthly.path],
+    queryFn: async () => {
+      const res = await fetch(api.wallet.monthly.path, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch wallet data");
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
+
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen bg-gray-50">
       <h1 className="text-2xl font-bold font-display text-gray-900 mb-6">Wallet</h1>
 
-      {/* Balance Card */}
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white shadow-xl shadow-gray-200 mb-8 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-8 -mt-8" />
-        <div className="relative z-10">
-          <p className="text-gray-400 text-sm font-medium mb-1">Total Earnings</p>
-          <h2 className="text-4xl font-bold font-display mb-6">$1,240.50</h2>
-          
-          <div className="flex gap-3">
-             <Button variant="secondary" size="sm" className="bg-white/10 hover:bg-white/20 text-white border-0">
-               <ArrowUpRight className="w-4 h-4 mr-2" /> Withdraw
-             </Button>
-             <Button variant="secondary" size="sm" className="bg-white/10 hover:bg-white/20 text-white border-0">
-               <CreditCard className="w-4 h-4 mr-2" /> Settings
-             </Button>
-          </div>
-        </div>
+      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white mb-6">
+        <p className="text-gray-300 text-sm">Current Month Revenue</p>
+        <h2 className="text-4xl font-bold mt-1">{isLoading ? "..." : `${data?.totalRevenue ?? 0}`}</h2>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <Card className="p-4 rounded-xl border-none shadow-sm flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-2">
-            <TrendingUp className="w-5 h-5" />
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <Card className="p-4">
+          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+            <ListChecks className="w-4 h-4" /> Completed Orders
           </div>
-          <span className="text-2xl font-bold text-gray-900">12</span>
-          <span className="text-xs text-muted-foreground">Jobs Done</span>
+          <p className="text-xl font-bold">{isLoading ? "..." : data?.completedOrders ?? 0}</p>
         </Card>
-        <Card className="p-4 rounded-xl border-none shadow-sm flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 mb-2">
-            <Wallet className="w-5 h-5" />
+        <Card className="p-4">
+          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+            <Wallet className="w-4 h-4" /> Commission
           </div>
-          <span className="text-2xl font-bold text-gray-900">$240</span>
-          <span className="text-xs text-muted-foreground">Bonus</span>
+          <p className="text-xl font-bold">{isLoading ? "..." : data?.totalCommission ?? 0}</p>
         </Card>
       </div>
 
-      {/* Transactions */}
-      <div>
-        <h3 className="font-bold text-lg mb-4">Recent Transactions</h3>
-        <div className="space-y-3">
-          {[1, 2, 3, 4].map((i) => (
-             <div key={i} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                    <span className="font-bold text-xs text-gray-500">JD</span>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">Job Payment</p>
-                    <p className="text-xs text-muted-foreground">Today, 2:30 PM</p>
-                  </div>
-                </div>
-                <span className="font-bold text-green-600">+$85.00</span>
-             </div>
-          ))}
+      <Card className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart3 className="w-4 h-4" />
+          <h3 className="font-semibold">Service Count Breakdown</h3>
         </div>
-      </div>
+        {!data?.serviceBreakdown?.length ? (
+          <p className="text-sm text-muted-foreground">No completed services this month.</p>
+        ) : (
+          <div className="space-y-2">
+            {data.serviceBreakdown.map((s) => (
+              <div key={s.serviceName} className="flex justify-between text-sm">
+                <span>{s.serviceName}</span>
+                <span className="font-semibold">{s.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
+

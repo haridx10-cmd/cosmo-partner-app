@@ -3,6 +3,20 @@
 ## Overview
 Production-grade salon-at-home employee management system with custom authentication, role-based access, admin dashboard, Google Sheets order sync, and real-time GPS tracking.
 
+## Local Run (Mac/Windows/Linux)
+1. Copy `.env.example` to `.env`.
+2. Fill `DATABASE_URL` from Supabase (Transaction pooler or direct DB URL) and `SESSION_SECRET`.
+3. Run `npm install`.
+4. Run DB schema migration: `npm run db:push`.
+5. Start app: `npm run dev`.
+6. Open `http://localhost:5000`.
+
+## Supabase Notes
+- This codebase already uses PostgreSQL + Drizzle, so Supabase is the database host (no major ORM rewrite needed).
+- Keep using server-side auth/session logic in Express for now.
+- Later phase: migrate auth to Supabase Auth and use JWT middleware if you need OTP/social login and better device/session controls.
+- Enable daily backups, PITR (if on paid plan), and RLS only when moving to direct client Supabase access.
+
 ## Architecture
 - **Backend**: Express.js with express-session, bcryptjs auth, PostgreSQL via Drizzle ORM
 - **Frontend**: React + Vite, TanStack Query, Wouter routing, Tailwind CSS, shadcn/ui

@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { storage } from "./storage";
+import { randomUUID } from "crypto";
 
 let syncInterval: NodeJS.Timeout | null = null;
 
@@ -16,11 +17,14 @@ interface SheetRow {
   employeeName: string;
   mapsUrl: string;
   orderNum: number | null;
+  areaName: string;
+  externalOrderId: string;
 }
 
 function parseServices(servicesStr: string): { name: string; price: number }[] {
   if (!servicesStr) return [];
-  return servicesStr.split(",").map(s => {
+  const delimiter = servicesStr.includes("-") ? "-" : ",";
+  return servicesStr.split(delimiter).map(s => {
     const trimmed = s.trim();
     const match = trimmed.match(/^(.+?)\s*[-–]\s*(\d+)$/);
     if (match) {
@@ -129,6 +133,8 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
   }
   const rawOrderNum = row[10]?.trim();
   const orderNum = rawOrderNum ? parseInt(rawOrderNum) : null;
+  const areaName = row[11]?.trim() || "";
+  const externalOrderId = row[12]?.trim() || randomUUID();
 
   return {
     rowIndex,
@@ -143,10 +149,12 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
     employeeName: row[8]?.trim() || "",
     mapsUrl,
     orderNum: orderNum && !isNaN(orderNum) ? orderNum : null,
+    areaName,
+    externalOrderId,
   };
 }
 
-export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:K"): Promise<{ imported: number; updated: number; errors: number }> {
+export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:M"): Promise<{ imported: number; updated: number; errors: number }> {
   const result = { imported: 0, updated: 0, errors: 0 };
 
   const rows = await getSheetData(sheetId, range);
@@ -198,6 +206,9 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           employeeId,
           sheetDate: sheetRow.appointmentDate,
           sheetTime: sheetRow.appointmentTime,
+          areaName: sheetRow.areaName || existing.areaName || existing.orderAreaName || undefined,
+          orderAreaName: sheetRow.areaName || existing.orderAreaName || undefined,
+          externalOrderId: sheetRow.externalOrderId || existing.externalOrderId || undefined,
         };
         if (sheetRow.orderNum !== null && existing.orderNum === null) {
           updateData.orderNum = sheetRow.orderNum;
@@ -223,6 +234,9 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           sheetDate: sheetRow.appointmentDate,
           sheetTime: sheetRow.appointmentTime,
           orderNum: sheetRow.orderNum,
+          areaName: sheetRow.areaName || undefined,
+          orderAreaName: sheetRow.areaName || undefined,
+          externalOrderId: sheetRow.externalOrderId,
         });
         result.imported++;
       }

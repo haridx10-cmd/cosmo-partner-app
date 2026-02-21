@@ -1,10 +1,11 @@
 import { db } from "./db";
 import {
   employees, orders, issues, attendance, locationHistory, beauticianLiveTracking, orderServiceSessions,
+  products, productPurchases, productConsumptions, productRequests, serviceProductMapping,
   type Employee, type Order, type Issue, type Attendance, type LiveTracking, type ServiceSession,
-  type InsertIssue, type InsertOrder, type InsertLiveTracking
+  type InsertIssue, type InsertOrder, type InsertLiveTracking, type Product, type InsertProduct, type ProductRequest, type InsertProductRequest
 } from "@shared/schema";
-import { eq, and, desc, sql, or, like, gte, lte, lt, isNull } from "drizzle-orm";
+import { eq, and, desc, sql, or, gte, lte, lt } from "drizzle-orm";
 
 export interface IStorage {
   // Auth
@@ -71,6 +72,21 @@ export interface IStorage {
   getRoutingData(date: Date): Promise<any[]>;
   updateOrderAcceptanceStatus(id: number, status: string): Promise<Order>;
   updateOrderNum(id: number, orderNum: number | null): Promise<Order>;
+  autoGenerateConsumptionsForOrder(orderId: number): Promise<void>;
+
+  // Inventory
+  upsertProductByName(input: { name: string; unit: string; costPerUnit: string | number; lowStockThreshold?: string | number }): Promise<Product>;
+  getActiveProducts(): Promise<Product[]>;
+  createProductRequest(data: InsertProductRequest): Promise<ProductRequest>;
+  getProductRequestsForBeautician(beauticianId: number): Promise<Array<ProductRequest & { productName: string }>>;
+  getStockSummary(): Promise<Array<{ productId: number; productName: string; unit: string; lowStockThreshold: number; totalPurchased: number; totalUsed: number; stockLeft: number; costPerUnit: number }>>;
+  getWalletMonthlySummary(beauticianId: number, now?: Date): Promise<{ completedOrders: number; totalRevenue: number; totalCommission: number; serviceBreakdown: Array<{ serviceName: string; count: number }> }>;
+  getInventoryAdminSummary(): Promise<{
+    stock: Array<{ productId: number; productName: string; unit: string; lowStockThreshold: number; totalPurchased: number; totalUsed: number; stockLeft: number; costPerUnit: number }>;
+    totalPurchaseValue: number;
+    totalConsumptionValue: number;
+    usageByBeautician: Array<{ beauticianId: number; beauticianName: string; totalUsageValue: number; totalUsageQty: number }>;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -122,10 +138,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateOrderStatus(id: number, status: string): Promise<Order> {
+    const [existing] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
     const [order] = await db.update(orders)
       .set({ status })
       .where(eq(orders.id, id))
       .returning();
+    if (order && status === "completed" && existing?.status !== "completed") {
+      await this.autoGenerateConsumptionsForOrder(order.id);
+    }
     return order;
   }
 
@@ -507,6 +527,189 @@ export class DatabaseStorage implements IStorage {
   async updateOrderNum(id: number, orderNum: number | null) {
     const [updated] = await db.update(orders).set({ orderNum }).where(eq(orders.id, id)).returning();
     return updated;
+  }
+
+  async upsertProductByName(input: { name: string; unit: string; costPerUnit: string | number; lowStockThreshold?: string | number }) {
+    const normalizedName = input.name.trim();
+    const [existing] = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${normalizedName})`).limit(1);
+    if (existing) {
+      const [updated] = await db.update(products).set({
+        unit: input.unit.trim(),
+        costPerUnit: String(input.costPerUnit),
+        lowStockThreshold: String(input.lowStockThreshold ?? 0),
+        isActive: true,
+      }).where(eq(products.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(products).values({
+      name: normalizedName,
+      unit: input.unit.trim(),
+      costPerUnit: String(input.costPerUnit),
+      lowStockThreshold: String(input.lowStockThreshold ?? 0),
+      isActive: true,
+    } as InsertProduct).returning();
+    return created;
+  }
+
+  async getActiveProducts() {
+    return db.select().from(products).where(eq(products.isActive, true)).orderBy(products.name);
+  }
+
+  async createProductRequest(data: InsertProductRequest) {
+    const [created] = await db.insert(productRequests).values(data).returning();
+    return created;
+  }
+
+  async getProductRequestsForBeautician(beauticianId: number) {
+    const rows = await db.select({
+      request: productRequests,
+      productName: products.name,
+    }).from(productRequests)
+      .innerJoin(products, eq(productRequests.productId, products.id))
+      .where(eq(productRequests.beauticianId, beauticianId))
+      .orderBy(desc(productRequests.requestedAt));
+    return rows.map((r) => ({ ...r.request, productName: r.productName }));
+  }
+
+  async getStockSummary() {
+    const rows = await db.execute(sql`
+      SELECT
+        p.id AS "productId",
+        p.name AS "productName",
+        p.unit AS "unit",
+        p.cost_per_unit AS "costPerUnit",
+        p.low_stock_threshold AS "lowStockThreshold",
+        COALESCE(pp.total_purchased, 0) AS "totalPurchased",
+        COALESCE(pc.total_used, 0) AS "totalUsed",
+        COALESCE(pp.total_purchased, 0) - COALESCE(pc.total_used, 0) AS "stockLeft"
+      FROM products p
+      LEFT JOIN (
+        SELECT product_id, SUM(quantity) AS total_purchased
+        FROM product_purchases
+        GROUP BY product_id
+      ) pp ON pp.product_id = p.id
+      LEFT JOIN (
+        SELECT product_id, SUM(quantity_used) AS total_used
+        FROM product_consumptions
+        GROUP BY product_id
+      ) pc ON pc.product_id = p.id
+      WHERE p.is_active = true
+      ORDER BY p.name ASC
+    `);
+
+    return rows.rows.map((r: any) => ({
+      productId: Number(r.productId),
+      productName: String(r.productName),
+      unit: String(r.unit),
+      lowStockThreshold: Number(r.lowStockThreshold ?? 0),
+      totalPurchased: Number(r.totalPurchased ?? 0),
+      totalUsed: Number(r.totalUsed ?? 0),
+      stockLeft: Number(r.stockLeft ?? 0),
+      costPerUnit: Number(r.costPerUnit ?? 0),
+    }));
+  }
+
+  async autoGenerateConsumptionsForOrder(orderId: number) {
+    const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!order || !order.employeeId) return;
+
+    const [existingConsumption] = await db.select({ id: productConsumptions.id })
+      .from(productConsumptions)
+      .where(order.externalOrderId
+        ? or(
+            eq(productConsumptions.orderId, orderId),
+            eq(productConsumptions.externalOrderId, order.externalOrderId),
+          )
+        : eq(productConsumptions.orderId, orderId))
+      .limit(1);
+    if (existingConsumption) return;
+
+    const serviceNames = (order.services || [])
+      .map((s: any) => String(s?.name || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (!serviceNames.length) return;
+
+    const allMappings = await db.select().from(serviceProductMapping);
+    const mappings = allMappings.filter((m) => serviceNames.includes(m.serviceName.trim().toLowerCase()));
+    if (!mappings.length) return;
+
+    await db.insert(productConsumptions).values(
+      mappings.map((m) => ({
+        orderId,
+        externalOrderId: order.externalOrderId ?? null,
+        beauticianId: order.employeeId!,
+        productId: m.productId,
+        quantityUsed: m.quantityRequired,
+        autoGenerated: true,
+      }))
+    );
+  }
+
+  async getWalletMonthlySummary(beauticianId: number, now = new Date()) {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+
+    const completedOrders = await db.select().from(orders).where(and(
+      eq(orders.employeeId, beauticianId),
+      eq(orders.status, "completed"),
+      gte(orders.appointmentTime, monthStart),
+      lt(orders.appointmentTime, monthEnd),
+    ));
+
+    const serviceBreakdownMap = new Map<string, number>();
+    let totalRevenue = 0;
+    for (const o of completedOrders) {
+      totalRevenue += o.amount ?? 0;
+      const orderServices = (o.services || []) as Array<{ name: string }>;
+      for (const s of orderServices) {
+        const key = s.name?.trim();
+        if (!key) continue;
+        serviceBreakdownMap.set(key, (serviceBreakdownMap.get(key) || 0) + 1);
+      }
+    }
+
+    return {
+      completedOrders: completedOrders.length,
+      totalRevenue,
+      totalCommission: 0,
+      serviceBreakdown: Array.from(serviceBreakdownMap.entries())
+        .map(([serviceName, count]) => ({ serviceName, count }))
+        .sort((a, b) => b.count - a.count),
+    };
+  }
+
+  async getInventoryAdminSummary() {
+    const stock = await this.getStockSummary();
+    const totalPurchaseValue = stock.reduce((sum, s) => sum + (s.totalPurchased * s.costPerUnit), 0);
+    const totalConsumptionValue = stock.reduce((sum, s) => sum + (s.totalUsed * s.costPerUnit), 0);
+
+    const usageRows = await db.execute(sql`
+      SELECT
+        e.id AS "beauticianId",
+        e.name AS "beauticianName",
+        COALESCE(SUM(pc.quantity_used), 0) AS "totalUsageQty",
+        COALESCE(SUM(pc.quantity_used * p.cost_per_unit), 0) AS "totalUsageValue"
+      FROM employees e
+      LEFT JOIN product_consumptions pc ON pc.beautician_id = e.id
+      LEFT JOIN products p ON p.id = pc.product_id
+      WHERE e.role = 'employee'
+      GROUP BY e.id, e.name
+      ORDER BY e.name ASC
+    `);
+
+    const usageByBeautician = usageRows.rows.map((r: any) => ({
+      beauticianId: Number(r.beauticianId),
+      beauticianName: String(r.beauticianName),
+      totalUsageValue: Number(r.totalUsageValue ?? 0),
+      totalUsageQty: Number(r.totalUsageQty ?? 0),
+    }));
+
+    return {
+      stock,
+      totalPurchaseValue,
+      totalConsumptionValue,
+      usageByBeautician,
+    };
   }
 }
 

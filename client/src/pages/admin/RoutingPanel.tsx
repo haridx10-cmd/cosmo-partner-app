@@ -217,9 +217,11 @@ export default function RoutingPanel({ dateRange }: RoutingPanelProps) {
                         {order.amount}
                       </td>
                       <td className="p-3">
-                        <div className="flex flex-wrap gap-1 max-w-[140px]">
+                        <div className="max-w-[160px] space-y-1">
                           {(order.services || []).map((s: any, i: number) => (
-                            <Badge key={i} variant="secondary" className="text-[10px] h-4 whitespace-nowrap">{s.name}</Badge>
+                            <div key={i} className="text-[11px] leading-4">
+                              {s.name}
+                            </div>
                           ))}
                         </div>
                       </td>

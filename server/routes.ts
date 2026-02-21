@@ -6,9 +6,10 @@ import bcrypt from "bcryptjs";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { orders as ordersTable } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { startPeriodicProductsSync, syncProductsFromSheet } from "./products-sync";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -24,7 +25,7 @@ if (process.env.DATABASE_URL) {
   app.use(
     session({
       store: new pgStore({
-        conString: process.env.DATABASE_URL,
+        pool,
         createTableIfMissing: true,
         tableName: "sessions",
       }),
@@ -105,37 +106,18 @@ if (process.env.DATABASE_URL) {
 
   app.post(api.auth.login.path, async (req: any, res) => {
     try {
-      const { identifier, password } = req.body;
-  
-      // DEV LOGIN (no DB required)
-      if (identifier === "admin" && password === "admin123") {
-        req.session.employeeId = 1;
-        req.session.role = "admin";
-  
-        return res.json({
-          employee: {
-            id: 1,
-            name: "Admin User",
-            role: "admin",
-          },
-        });
-      }
-  
-      if (identifier === "priya" && password === "1234") {
-        req.session.employeeId = 2;
-        req.session.role = "employee";
-  
-        return res.json({
-          employee: {
-            id: 2,
-            name: "Priya Sharma",
-            role: "employee",
-          },
-        });
-      }
-  
-      return res.status(401).json({ message: "Invalid credentials" });
-  
+      const { identifier, password } = api.auth.login.input.parse(req.body);
+      const emp = await storage.findEmployeeByIdentifier(identifier);
+      if (!emp) return res.status(401).json({ message: "Invalid credentials" });
+
+      const valid = await bcrypt.compare(password, emp.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Invalid credentials" });
+
+      req.session.employeeId = emp.id;
+      req.session.role = emp.role;
+
+      const { passwordHash, ...safeEmployee } = emp;
+      return res.json({ employee: safeEmployee });
     } catch (err) {
       return res.status(400).json({ message: "Invalid request" });
     }
@@ -298,6 +280,11 @@ if (process.env.DATABASE_URL) {
     res.json(order);
   });
 
+  app.get("/api/wallet/monthly", loadEmployee, async (req: any, res) => {
+    const summary = await storage.getWalletMonthlySummary(req.employee.id);
+    res.json(summary);
+  });
+
   // === ISSUE ROUTES ===
 
   app.post(api.issues.create.path, loadEmployee, async (req: any, res) => {
@@ -307,6 +294,41 @@ if (process.env.DATABASE_URL) {
       employeeId: req.employee.id,
     });
     res.status(201).json(issue);
+  });
+
+  // === INVENTORY ROUTES ===
+  app.get("/api/inventory/products", loadEmployee, async (_req, res) => {
+    const products = await storage.getActiveProducts();
+    res.json(products);
+  });
+
+  app.post("/api/inventory/requests", loadEmployee, async (req: any, res) => {
+    const { productId, quantityRequested } = req.body;
+    if (!productId || !quantityRequested) {
+      return res.status(400).json({ message: "productId and quantityRequested are required" });
+    }
+    const created = await storage.createProductRequest({
+      beauticianId: req.employee.id,
+      productId: Number(productId),
+      quantityRequested: String(quantityRequested),
+      status: "pending",
+    });
+    res.status(201).json(created);
+  });
+
+  app.get("/api/inventory/requests/me", loadEmployee, async (req: any, res) => {
+    const requests = await storage.getProductRequestsForBeautician(req.employee.id);
+    res.json(requests);
+  });
+
+  app.get("/api/inventory/stock-summary", loadEmployee, async (_req, res) => {
+    const summary = await storage.getStockSummary();
+    res.json(summary);
+  });
+
+  app.get("/api/admin/inventory/summary", requireAdmin, async (_req, res) => {
+    const summary = await storage.getInventoryAdminSummary();
+    res.json(summary);
   });
 
   // === ADMIN ROUTES ===
@@ -439,7 +461,7 @@ if (process.env.DATABASE_URL) {
     try {
       const { sheetId, range } = req.body;
       if (!sheetId) return res.status(400).json({ message: "Sheet ID is required" });
-      const result = await syncFromSheet(sheetId, range || "Sheet1!A2:I");
+      const result = await syncFromSheet(sheetId, range || "Sheet1!A2:M");
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Sync failed" });
@@ -456,8 +478,25 @@ if (process.env.DATABASE_URL) {
   // Start periodic Google Sheets sync if configured
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (sheetId) {
-    startPeriodicSync(sheetId, process.env.GOOGLE_SHEET_RANGE || "Sheet1!A2:I", 2 * 60 * 1000);
+    startPeriodicSync(sheetId, process.env.GOOGLE_SHEET_RANGE || "Sheet1!A2:M", 2 * 60 * 1000);
   }
+
+  const productsSheetId = process.env.GOOGLE_PRODUCTS_SHEET_ID;
+  if (productsSheetId) {
+    startPeriodicProductsSync(productsSheetId, process.env.GOOGLE_PRODUCTS_SHEET_RANGE || "Sheet1!A2:D", 2 * 60 * 1000);
+  }
+
+  app.post("/api/admin/sync-products-sheet", requireAdmin, async (req, res) => {
+    try {
+      const { sheetId: inputSheetId, range } = req.body;
+      const effectiveSheetId = inputSheetId || process.env.GOOGLE_PRODUCTS_SHEET_ID;
+      if (!effectiveSheetId) return res.status(400).json({ message: "Products sheet ID is required" });
+      const result = await syncProductsFromSheet(effectiveSheetId, range || process.env.GOOGLE_PRODUCTS_SHEET_RANGE || "Sheet1!A2:D");
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Products sync failed" });
+    }
+  });
 
   // Cleanup old tracking data every 6 hours (keep only 7 days)
   setInterval(async () => {

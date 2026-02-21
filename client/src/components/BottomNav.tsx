@@ -9,7 +9,7 @@ export function BottomNav() {
     { href: "/", label: "New", icon: Home },
     { href: "/ongoing", label: "Ongoing", icon: ListTodo },
     { href: "/wallet", label: "Wallet", icon: Wallet },
-    { href: "/products", label: "Products", icon: ShoppingBag },
+    { href: "/products", label: "Inventory", icon: ShoppingBag },
     { href: "/menu", label: "Menu", icon: Menu },
   ];
 

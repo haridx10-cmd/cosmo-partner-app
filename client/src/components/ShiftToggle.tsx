@@ -9,7 +9,7 @@ export function ShiftToggle() {
 
   if (isLoading || !beautician) return null;
 
-  const isOnline = beautician.isOnline;
+  const isOnline = !!beautician.isOnline;
 
   const handleToggle = (checked: boolean) => {
     toggleMutation.mutate(checked ? 'start_shift' : 'end_shift');

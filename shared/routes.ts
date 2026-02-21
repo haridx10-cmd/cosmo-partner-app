@@ -80,6 +80,78 @@ export const api = {
       },
     },
   },
+  inventory: {
+    products: {
+      method: "GET" as const,
+      path: "/api/inventory/products",
+      responses: {
+        200: z.array(z.object({
+          id: z.number(),
+          name: z.string(),
+          unit: z.string(),
+          costPerUnit: z.any(),
+          lowStockThreshold: z.any(),
+        })),
+      },
+    },
+    createRequest: {
+      method: "POST" as const,
+      path: "/api/inventory/requests",
+      input: z.object({
+        productId: z.number(),
+        quantityRequested: z.union([z.string(), z.number()]),
+      }),
+      responses: {
+        201: z.object({ id: z.number() }),
+      },
+    },
+    myRequests: {
+      method: "GET" as const,
+      path: "/api/inventory/requests/me",
+      responses: {
+        200: z.array(z.object({
+          id: z.number(),
+          productName: z.string(),
+          quantityRequested: z.any(),
+          status: z.string(),
+          requestedAt: z.string().nullable(),
+        })),
+      },
+    },
+    stockSummary: {
+      method: "GET" as const,
+      path: "/api/inventory/stock-summary",
+      responses: {
+        200: z.array(z.object({
+          productId: z.number(),
+          productName: z.string(),
+          unit: z.string(),
+          lowStockThreshold: z.number(),
+          totalPurchased: z.number(),
+          totalUsed: z.number(),
+          stockLeft: z.number(),
+          costPerUnit: z.number(),
+        })),
+      },
+    },
+  },
+  wallet: {
+    monthly: {
+      method: "GET" as const,
+      path: "/api/wallet/monthly",
+      responses: {
+        200: z.object({
+          completedOrders: z.number(),
+          totalRevenue: z.number(),
+          totalCommission: z.number(),
+          serviceBreakdown: z.array(z.object({
+            serviceName: z.string(),
+            count: z.number(),
+          })),
+        }),
+      },
+    },
+  },
   tracking: {
     liveByBeautician: {
       method: 'GET' as const,

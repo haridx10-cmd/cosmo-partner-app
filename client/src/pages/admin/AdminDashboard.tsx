@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors } from "lucide-react";
+import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors, Boxes } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import OverviewPanel from "./OverviewPanel";
 import SmoothOrdersPanel from "./SmoothOrdersPanel";
@@ -13,6 +13,7 @@ import TrackingPanel from "./TrackingPanel";
 import EmployeesPanel from "./EmployeesPanel";
 import BeauticiansPanel from "./BeauticiansPanel";
 import RoutingPanel from "./RoutingPanel";
+import AdminInventoryPanel from "./AdminInventoryPanel";
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -156,6 +157,10 @@ export default function AdminDashboard() {
               <Users className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Team</span>
             </TabsTrigger>
+            <TabsTrigger value="inventory" className="flex-1 min-w-[60px] gap-1 text-xs sm:text-sm" data-testid="tab-inventory">
+              <Boxes className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Inventory</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -175,6 +180,7 @@ export default function AdminDashboard() {
           </TabsContent>
           <TabsContent value="tracking"><TrackingPanel /></TabsContent>
           <TabsContent value="employees"><EmployeesPanel /></TabsContent>
+          <TabsContent value="inventory"><AdminInventoryPanel /></TabsContent>
         </Tabs>
       </div>
     </div>
