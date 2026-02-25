@@ -39,12 +39,12 @@ export function useUpdateOrderStatus() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' }) => {
+    mutationFn: async ({ id, status, cancellationReason }: { id: number; status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'expired'; cancellationReason?: string }) => {
       const url = buildUrl(api.orders.updateStatus.path, { id });
       const res = await fetch(url, {
         method: api.orders.updateStatus.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, cancellationReason }),
         credentials: "include",
       });
       

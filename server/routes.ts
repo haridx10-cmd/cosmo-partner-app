@@ -9,7 +9,7 @@ import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
 import { db, pool } from "./db";
 import { orders as ordersTable } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { startPeriodicProductsSync, syncProductsFromSheet } from "./products-sync";
+import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -265,7 +265,24 @@ if (process.env.DATABASE_URL) {
 
   app.get(api.orders.list.path, loadEmployee, async (req: any, res) => {
     const myOrders = await storage.getOrdersForEmployee(req.employee.id);
-    res.json(myOrders);
+    const status = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : undefined;
+    const date = typeof req.query.date === "string" ? req.query.date : undefined;
+
+    const filtered = myOrders.filter((order) => {
+      const orderStatus = String(order.status ?? "").trim().toLowerCase();
+      if (status && orderStatus !== status) return false;
+      if (date) {
+        const appointment = new Date(order.appointmentTime);
+        if (Number.isNaN(appointment.getTime())) {
+          // Keep legacy/bad rows visible instead of dropping all orders due to parse errors.
+          return true;
+        }
+        const orderDate = `${appointment.getFullYear()}-${String(appointment.getMonth() + 1).padStart(2, "0")}-${String(appointment.getDate()).padStart(2, "0")}`;
+        if (orderDate !== date) return false;
+      }
+      return true;
+    });
+    res.json(filtered);
   });
 
   app.get(api.orders.get.path, loadEmployee, async (req, res) => {
@@ -275,8 +292,11 @@ if (process.env.DATABASE_URL) {
   });
 
   app.patch(api.orders.updateStatus.path, loadEmployee, async (req, res) => {
-    const { status } = req.body;
-    const order = await storage.updateOrderStatus(Number(req.params.id), status);
+    const { status, cancellationReason } = req.body;
+    const orderId = Number(req.params.id);
+    const order = status === "cancelled"
+      ? await storage.cancelOrder(orderId, cancellationReason || "Cancelled by beautician")
+      : await storage.updateOrderStatus(orderId, status);
     res.json(order);
   });
 
@@ -289,10 +309,18 @@ if (process.env.DATABASE_URL) {
 
   app.post(api.issues.create.path, loadEmployee, async (req: any, res) => {
     const input = api.issues.create.input.parse(req.body);
+    const immediateCancellationReasons = new Set([
+      "Customer Cancelled (Emergency)",
+      "Customer Cancelled (Delay)",
+      "Unable to Reach Customer",
+    ]);
     const issue = await storage.createIssue({
       ...input,
       employeeId: req.employee.id,
     });
+    if (input.orderId && immediateCancellationReasons.has(input.issueType)) {
+      await storage.cancelOrder(input.orderId, input.issueType);
+    }
     res.status(201).json(issue);
   });
 
@@ -321,6 +349,41 @@ if (process.env.DATABASE_URL) {
     res.json(requests);
   });
 
+  app.post("/api/employee/product-request", loadEmployee, async (req: any, res) => {
+    const { productId, quantity, reason } = req.body || {};
+    if (!productId || !quantity) {
+      return res.status(400).json({ message: "productId and quantity are required" });
+    }
+    const created = await storage.createProductRequest({
+      beauticianId: req.employee.id,
+      productId: Number(productId),
+      quantityRequested: String(quantity),
+      reason: reason ? String(reason) : null,
+      status: "pending",
+    });
+    res.status(201).json(created);
+  });
+
+  app.post("/api/product-requests", loadEmployee, async (req: any, res) => {
+    const { productId, quantity, remarks } = req.body || {};
+    if (!productId || !quantity) {
+      return res.status(400).json({ message: "productId and quantity are required" });
+    }
+    const created = await storage.createProductRequest({
+      beauticianId: req.employee.id,
+      productId: Number(productId),
+      quantityRequested: String(quantity),
+      reason: remarks ? String(remarks) : null,
+      status: "pending",
+    });
+    res.status(201).json(created);
+  });
+
+  app.get("/api/employee/product-requests", loadEmployee, async (req: any, res) => {
+    const requests = await storage.getProductRequestsForBeautician(req.employee.id);
+    res.json(requests);
+  });
+
   app.get("/api/inventory/stock-summary", loadEmployee, async (_req, res) => {
     const summary = await storage.getStockSummary();
     res.json(summary);
@@ -329,6 +392,65 @@ if (process.env.DATABASE_URL) {
   app.get("/api/admin/inventory/summary", requireAdmin, async (_req, res) => {
     const summary = await storage.getInventoryAdminSummary();
     res.json(summary);
+  });
+
+  app.get("/api/admin/inventory", requireAdmin, async (_req, res) => {
+    const summary = await storage.getStockSummary();
+    res.json(summary.map((row) => ({
+      productName: row.productName,
+      currentStock: row.stockLeft,
+      lowStockThreshold: row.lowStockThreshold,
+      status: row.stockLeft < row.lowStockThreshold ? "LOW" : "OK",
+    })));
+  });
+
+  app.get("/api/admin/products-not-found", requireAdmin, async (_req, res) => {
+    const rows = await storage.getProductsNotFound(100);
+    res.json(rows);
+  });
+
+  app.get("/api/admin/product-requests", requireAdmin, async (req, res) => {
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const rows = await storage.getProductRequestsForAdmin(status);
+    res.json(rows);
+  });
+
+  app.patch("/api/admin/product-requests/:id/approve", requireAdmin, async (req: any, res) => {
+    const requestId = Number(req.params.id);
+    const quantityApproved = Number(req.body?.quantityApproved ?? 0);
+    if (!Number.isFinite(quantityApproved) || quantityApproved < 0) {
+      return res.status(400).json({ message: "quantityApproved must be >= 0" });
+    }
+    const updated = await storage.approveProductRequest(requestId, req.employee.id, quantityApproved);
+    if (!updated) return res.status(404).json({ message: "Product request not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/admin/cancellations/customer", requireAdmin, async (_req, res) => {
+    const rows = await storage.getCancelledOrdersByCategory("customer");
+    res.json(rows);
+  });
+
+  app.get("/api/admin/cancellations/beautician", requireAdmin, async (_req, res) => {
+    const rows = await storage.getCancelledOrdersByCategory("beautician");
+    res.json(rows);
+  });
+
+  app.post("/api/admin/cancellations/:id/reallocate", requireAdmin, async (req, res) => {
+    const orderId = Number(req.params.id);
+    const created = await storage.reallocateCancelledOrder(orderId);
+    if (!created) return res.status(404).json({ message: "Order not found" });
+    res.status(201).json(created);
+  });
+
+  app.get("/api/admin/inventory", requireAdmin, async (_req, res) => {
+    const summary = await storage.getStockSummary();
+    res.json(summary.map((row) => ({
+      productName: row.productName,
+      currentStock: row.stockLeft,
+      lowStockThreshold: row.lowStockThreshold,
+      status: row.stockLeft < row.lowStockThreshold ? "LOW" : "OK",
+    })));
   });
 
   // === ADMIN ROUTES ===
@@ -384,7 +506,12 @@ if (process.env.DATABASE_URL) {
     try {
       const orderId = Number(req.params.id);
       const { employeeId } = api.admin.assignOrder.input.parse(req.body);
-      const [updated] = await db.update(ordersTable).set({ employeeId }).where(eq(ordersTable.id, orderId)).returning();
+      const current = await storage.getOrder(orderId);
+      const shouldResetToPending = !!employeeId && (current?.status === "cancelled" || current?.status === "expired");
+      const [updated] = await db.update(ordersTable).set({
+        employeeId,
+        ...(shouldResetToPending ? { status: "pending" } : {}),
+      }).where(eq(ordersTable.id, orderId)).returning();
       if (!updated) return res.status(404).json({ message: "Order not found" });
       res.json(updated);
     } catch (err: any) {
@@ -481,18 +608,12 @@ if (process.env.DATABASE_URL) {
     startPeriodicSync(sheetId, process.env.GOOGLE_SHEET_RANGE || "Sheet1!A2:M", 2 * 60 * 1000);
   }
 
-  const productsSheetId = process.env.GOOGLE_PRODUCTS_SHEET_ID;
-  if (productsSheetId) {
-    startPeriodicProductsSync(productsSheetId, process.env.GOOGLE_PRODUCTS_SHEET_RANGE || "Sheet1!A2:D", 2 * 60 * 1000);
-  }
+  startPeriodicInventorySheetsSync(2 * 60 * 1000);
 
   app.post("/api/admin/sync-products-sheet", requireAdmin, async (req, res) => {
     try {
-      const { sheetId: inputSheetId, range } = req.body;
-      const effectiveSheetId = inputSheetId || process.env.GOOGLE_PRODUCTS_SHEET_ID;
-      if (!effectiveSheetId) return res.status(400).json({ message: "Products sheet ID is required" });
-      const result = await syncProductsFromSheet(effectiveSheetId, range || process.env.GOOGLE_PRODUCTS_SHEET_RANGE || "Sheet1!A2:D");
-      res.json(result);
+      await syncAllInventorySheets();
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Products sync failed" });
     }
@@ -509,6 +630,19 @@ if (process.env.DATABASE_URL) {
       console.error("Tracking data cleanup error:", err);
     }
   }, 6 * 60 * 60 * 1000);
+
+  const runOrderExpiryCheck = async () => {
+    try {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const expired = await storage.expireInactiveOrders(startOfToday);
+      if (expired > 0) console.log(`[Orders] Auto-expired ${expired} orders`);
+    } catch (err) {
+      console.error("Order expiry check error:", err);
+    }
+  };
+  runOrderExpiryCheck();
+  setInterval(runOrderExpiryCheck, 24 * 60 * 60 * 1000);
 
   return httpServer;
 }

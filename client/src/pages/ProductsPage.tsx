@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@shared/routes";
 
@@ -24,6 +25,14 @@ type ProductRequest = {
   requestedAt: string | null;
 };
 
+function formatRequestStatus(status: string) {
+  const normalized = status?.toLowerCase?.() || "";
+  if (normalized === "approved") return "Approved";
+  if (normalized === "rejected") return "Rejected";
+  if (normalized === "partially_approved") return "Approved";
+  return "Pending";
+}
+
 type StockSummary = {
   productId: number;
   productName: string;
@@ -40,6 +49,8 @@ export default function ProductsPage() {
   const { toast } = useToast();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [quantityRequested, setQuantityRequested] = useState<string>("");
+  const [remarks, setRemarks] = useState<string>("");
+  const [raiseOpen, setRaiseOpen] = useState(false);
 
   const { data: products = [] } = useQuery<InventoryProduct[]>({
     queryKey: [api.inventory.products.path],
@@ -70,13 +81,14 @@ export default function ProductsPage() {
 
   const requestMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(api.inventory.createRequest.path, {
+      const res = await fetch("/api/product-requests", {
         method: api.inventory.createRequest.method,
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           productId: Number(selectedProductId),
-          quantityRequested: Number(quantityRequested),
+          quantity: Number(quantityRequested),
+          remarks: remarks || undefined,
         }),
       });
       if (!res.ok) throw new Error("Failed to create request");
@@ -85,6 +97,8 @@ export default function ProductsPage() {
     onSuccess: () => {
       setSelectedProductId("");
       setQuantityRequested("");
+      setRemarks("");
+      setRaiseOpen(false);
       queryClient.invalidateQueries({ queryKey: [api.inventory.myRequests.path] });
       toast({ title: "Request submitted" });
     },
@@ -105,7 +119,62 @@ export default function ProductsPage() {
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen bg-gray-50">
-      <h1 className="text-2xl font-bold font-display text-gray-900 mb-4">Inventory</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold font-display text-gray-900">Inventory</h1>
+        <Dialog open={raiseOpen} onOpenChange={setRaiseOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm">Raise Request</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Raise Product Request</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Product</p>
+                <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select product" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {products.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.name} ({p.unit})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Quantity Required</p>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={quantityRequested}
+                  onChange={(e) => setQuantityRequested(e.target.value)}
+                  placeholder="e.g. 2"
+                />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Remarks (optional)</p>
+                <Input
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="Reason / notes"
+                />
+              </div>
+              <Button
+                className="w-full"
+                disabled={!selectedProductId || !quantityRequested || requestMutation.isPending}
+                onClick={() => requestMutation.mutate()}
+              >
+                Submit Request
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
 
       <Tabs defaultValue="raise" className="w-full">
         <TabsList className="grid grid-cols-3 w-full mb-4">
@@ -173,7 +242,7 @@ export default function ProductsPage() {
                     <div key={r.id} className="border rounded-md p-3">
                       <p className="font-medium">{r.productName}</p>
                       <p className="text-sm text-muted-foreground">Qty: {r.quantityRequested}</p>
-                      <p className="text-sm capitalize">Status: {r.status}</p>
+                      <p className="text-sm">Status: {formatRequestStatus(r.status)}</p>
                       <p className="text-xs text-muted-foreground">
                         {r.requestedAt ? new Date(r.requestedAt).toLocaleString() : "-"}
                       </p>
@@ -233,4 +302,3 @@ export default function ProductsPage() {
     </div>
   );
 }
-

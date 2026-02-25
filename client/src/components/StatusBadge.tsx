@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type Status = "pending" | "confirmed" | "in_progress" | "completed" | "cancelled";
+type Status = "pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "expired";
 
 const styles: Record<Status, string> = {
   pending: "bg-orange-100 text-orange-700 border-orange-200",
@@ -8,6 +8,7 @@ const styles: Record<Status, string> = {
   in_progress: "bg-blue-100 text-blue-700 border-blue-200",
   completed: "bg-green-100 text-green-700 border-green-200",
   cancelled: "bg-red-100 text-red-700 border-red-200",
+  expired: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

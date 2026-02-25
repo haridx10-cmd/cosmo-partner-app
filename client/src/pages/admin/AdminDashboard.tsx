@@ -14,6 +14,8 @@ import EmployeesPanel from "./EmployeesPanel";
 import BeauticiansPanel from "./BeauticiansPanel";
 import RoutingPanel from "./RoutingPanel";
 import AdminInventoryPanel from "./AdminInventoryPanel";
+import ProductRequestsPanel from "./ProductRequestsPanel";
+import CancellationsPanel from "./CancellationsPanel";
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -161,6 +163,14 @@ export default function AdminDashboard() {
               <Boxes className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Inventory</span>
             </TabsTrigger>
+            <TabsTrigger value="product-requests" className="flex-1 min-w-[60px] gap-1 text-xs sm:text-sm" data-testid="tab-product-requests">
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Product Requests</span>
+            </TabsTrigger>
+            <TabsTrigger value="cancellations" className="flex-1 min-w-[60px] gap-1 text-xs sm:text-sm" data-testid="tab-cancellations">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cancellations</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -181,6 +191,8 @@ export default function AdminDashboard() {
           <TabsContent value="tracking"><TrackingPanel /></TabsContent>
           <TabsContent value="employees"><EmployeesPanel /></TabsContent>
           <TabsContent value="inventory"><AdminInventoryPanel /></TabsContent>
+          <TabsContent value="product-requests"><ProductRequestsPanel /></TabsContent>
+          <TabsContent value="cancellations"><CancellationsPanel /></TabsContent>
         </Tabs>
       </div>
     </div>

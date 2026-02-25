@@ -100,6 +100,13 @@ function callCustomer(phone: string | null | undefined, toast: (opts: any) => vo
   window.open(`tel:${cleaned}`, "_self");
 }
 
+function maskPhone(phone: string | null | undefined) {
+  if (!phone) return "No phone";
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length <= 4) return digits;
+  return `${"X".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
+}
+
 const geocodeCache = new Map<string, { lat: number; lng: number }>();
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
@@ -210,6 +217,7 @@ export default function OrderDetailsPage() {
   const { data: order, isLoading, error } = useOrder(id);
   const updateStatus = useUpdateOrderStatus();
   const [issueModalOpen, setIssueModalOpen] = useState(false);
+  const [acceptChoice, setAcceptChoice] = useState("accept");
   const { toast } = useToast();
 
   const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -319,14 +327,37 @@ export default function OrderDetailsPage() {
     switch (order.status) {
       case 'pending':
         return (
-          <Button
-            className="w-full h-12 text-lg font-semibold"
-            onClick={() => updateStatus.mutate({ id, status: 'confirmed' })}
-            disabled={updateStatus.isPending}
-            data-testid="button-accept-order"
-          >
-            {updateStatus.isPending ? "Confirming..." : "Accept & Confirm"}
-          </Button>
+          <div className="space-y-3">
+            <select
+              value={acceptChoice}
+              onChange={(e) => setAcceptChoice(e.target.value)}
+              className="w-full h-12 rounded-md border border-input bg-background px-3 text-sm"
+              data-testid="select-accept-action"
+            >
+              <option value="accept">Accept</option>
+              <option value="Cannot Accept (Unwell)">Cannot Accept (Unwell)</option>
+              <option value="Cannot Accept (Timing Conflict)">Cannot Accept (Timing Conflict)</option>
+              <option value="Cannot Accept (Location Issue)">Cannot Accept (Location Issue)</option>
+            </select>
+            <Button
+              className="w-full h-12 text-lg font-semibold"
+              onClick={() => {
+                if (acceptChoice === "accept") {
+                  updateStatus.mutate({ id, status: "confirmed" });
+                  return;
+                }
+                updateStatus.mutate({
+                  id,
+                  status: "cancelled",
+                  cancellationReason: acceptChoice,
+                });
+              }}
+              disabled={updateStatus.isPending}
+              data-testid="button-accept-order"
+            >
+              {updateStatus.isPending ? "Updating..." : "Submit"}
+            </Button>
+          </div>
         );
       case 'confirmed':
       case 'in_progress':
@@ -385,7 +416,7 @@ export default function OrderDetailsPage() {
                 data-testid="button-phone-inline"
               >
                 <Phone className="w-3.5 h-3.5 mr-1 shrink-0" />
-                <span data-testid="text-phone">{order.phone || "No phone"}</span>
+                <span data-testid="text-phone">{maskPhone(order.phone)}</span>
               </button>
             </div>
           </div>

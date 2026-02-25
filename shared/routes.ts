@@ -242,7 +242,10 @@ export const api = {
     updateStatus: {
       method: 'PATCH' as const,
       path: '/api/orders/:id/status',
-      input: z.object({ status: z.enum(['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']) }),
+      input: z.object({
+        status: z.enum(['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'expired']),
+        cancellationReason: z.string().optional(),
+      }),
       responses: {
         200: z.custom<typeof orders.$inferSelect>(),
       },
@@ -258,7 +261,7 @@ export const api = {
       },
     },
   },
-  admin: {
+    admin: {
     overview: {
       method: 'GET' as const,
       path: '/api/admin/overview',
@@ -339,6 +342,20 @@ export const api = {
       }),
       responses: {
         200: z.object({ imported: z.number(), updated: z.number(), errors: z.number() }),
+      },
+    },
+    productsNotFound: {
+      method: 'GET' as const,
+      path: '/api/admin/products-not-found',
+      responses: {
+        200: z.array(z.object({
+          id: z.number(),
+          orderId: z.number().nullable(),
+          externalOrderId: z.string().nullable(),
+          serviceName: z.string(),
+          productName: z.string().nullable(),
+          createdAt: z.string(),
+        })),
       },
     },
   },

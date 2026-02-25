@@ -1,11 +1,13 @@
 import { db } from "./db";
 import {
   employees, orders, issues, attendance, locationHistory, beauticianLiveTracking, orderServiceSessions,
-  products, productPurchases, productConsumptions, productRequests, serviceProductMapping,
+  products, productPurchases, productConsumptions, productRequests, serviceProductMapping, orderDefaultProducts,
+  productsNotFound,
   type Employee, type Order, type Issue, type Attendance, type LiveTracking, type ServiceSession,
-  type InsertIssue, type InsertOrder, type InsertLiveTracking, type Product, type InsertProduct, type ProductRequest, type InsertProductRequest
+  type InsertIssue, type InsertOrder, type InsertLiveTracking, type Product, type InsertProduct, type ProductRequest, type InsertProductRequest,
+  type InsertProductPurchase, type InsertServiceProductMap, type InsertOrderDefaultProduct, type ProductsNotFound, type InsertProductsNotFound
 } from "@shared/schema";
-import { eq, and, desc, sql, or, gte, lte, lt } from "drizzle-orm";
+import { eq, and, desc, sql, or, gte, lte, lt, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Auth
@@ -21,6 +23,8 @@ export interface IStorage {
   getOrdersForEmployee(employeeId: number): Promise<Order[]>;
   getOrder(id: number): Promise<Order | undefined>;
   updateOrderStatus(id: number, status: string): Promise<Order>;
+  cancelOrder(id: number, reason: string): Promise<Order>;
+  expireInactiveOrders(before: Date): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
   getOrderBySheetRowId(sheetRowId: string): Promise<Order | undefined>;
   updateOrder(id: number, data: Partial<InsertOrder>): Promise<Order>;
@@ -76,9 +80,14 @@ export interface IStorage {
 
   // Inventory
   upsertProductByName(input: { name: string; unit: string; costPerUnit: string | number; lowStockThreshold?: string | number }): Promise<Product>;
+  getProductByName(name: string): Promise<Product | undefined>;
   getActiveProducts(): Promise<Product[]>;
   createProductRequest(data: InsertProductRequest): Promise<ProductRequest>;
   getProductRequestsForBeautician(beauticianId: number): Promise<Array<ProductRequest & { productName: string }>>;
+  getProductRequestsForAdmin(status?: string): Promise<Array<ProductRequest & { productName: string; beauticianName: string }>>;
+  approveProductRequest(requestId: number, approvedBy: number, quantityApproved: number): Promise<ProductRequest | undefined>;
+  getCancelledOrdersByCategory(category: "customer" | "beautician"): Promise<Array<{ order: Order; employeeName: string | null }>>;
+  reallocateCancelledOrder(orderId: number): Promise<Order | undefined>;
   getStockSummary(): Promise<Array<{ productId: number; productName: string; unit: string; lowStockThreshold: number; totalPurchased: number; totalUsed: number; stockLeft: number; costPerUnit: number }>>;
   getWalletMonthlySummary(beauticianId: number, now?: Date): Promise<{ completedOrders: number; totalRevenue: number; totalCommission: number; serviceBreakdown: Array<{ serviceName: string; count: number }> }>;
   getInventoryAdminSummary(): Promise<{
@@ -87,6 +96,12 @@ export interface IStorage {
     totalConsumptionValue: number;
     usageByBeautician: Array<{ beauticianId: number; beauticianName: string; totalUsageValue: number; totalUsageQty: number }>;
   }>;
+  getProductStock(productId: number): Promise<number>;
+  createProductPurchase(input: InsertProductPurchase): Promise<void>;
+  upsertServiceProductMapping(input: InsertServiceProductMap): Promise<void>;
+  upsertOrderDefaultProduct(input: InsertOrderDefaultProduct): Promise<void>;
+  logMissingProduct(data: { orderId: number; externalOrderId?: string | null; serviceName: string; productName?: string | null }): Promise<void>;
+  getProductsNotFound(limit?: number): Promise<ProductsNotFound[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -147,6 +162,57 @@ export class DatabaseStorage implements IStorage {
       await this.autoGenerateConsumptionsForOrder(order.id);
     }
     return order;
+  }
+
+  async cancelOrder(id: number, _reason: string): Promise<Order> {
+    const reasonMap: Record<string, string> = {
+      "Customer Cancelled (Emergency)": "customer_cancelled_emergency",
+      "Customer Cancelled (Delay)": "customer_canceled_delay",
+      "Unable to Reach Customer": "customer_not_available",
+      "Cannot Accept (Unwell)": "unwell",
+      "Cannot Accept (Timing Conflict)": "timing_conflict",
+      "Cannot Accept (Location Issue)": "location_issue",
+      "Order expired due to inactivity": "no_action_expired",
+    };
+    const mappedReason = reasonMap[_reason] || _reason || "supply_side";
+    const [order] = await db.update(orders)
+      .set({ status: "cancelled", acceptanceStatus: mappedReason })
+      .where(eq(orders.id, id))
+      .returning();
+    try {
+      await db.execute(sql`UPDATE orders SET cancellation_reason = ${mappedReason} WHERE id = ${id}`);
+    } catch {
+      // cancellation_reason column is optional until migration is applied
+    }
+    return order;
+  }
+
+  async expireInactiveOrders(before: Date): Promise<number> {
+    const stale = await db.select({ id: orders.id }).from(orders)
+      .leftJoin(orderServiceSessions, eq(orderServiceSessions.orderId, orders.id))
+      .where(and(
+        inArray(orders.status, ["pending", "confirmed"]),
+        lt(orders.appointmentTime, before),
+        sql`${orderServiceSessions.id} IS NULL`,
+      ));
+
+    if (!stale.length) return 0;
+    const ids = stale.map((s) => s.id);
+    const updated = await db.update(orders)
+      .set({
+        status: "expired",
+        acceptanceStatus: "no_action_expired",
+      })
+      .where(inArray(orders.id, ids))
+      .returning({ id: orders.id });
+    if (updated.length > 0) {
+      try {
+        await db.execute(sql`UPDATE orders SET cancellation_reason = 'no_action_expired' WHERE id = ANY(${ids})`);
+      } catch {
+        // cancellation_reason column is optional until migration is applied
+      }
+    }
+    return updated.length;
   }
 
   async createOrder(order: InsertOrder): Promise<Order> {
@@ -551,24 +617,336 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async getProductByName(name: string) {
+    const normalizedName = name.trim();
+    const [row] = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${normalizedName})`).limit(1);
+    return row;
+  }
+
   async getActiveProducts() {
     return db.select().from(products).where(eq(products.isActive, true)).orderBy(products.name);
   }
 
-  async createProductRequest(data: InsertProductRequest) {
-    const [created] = await db.insert(productRequests).values(data).returning();
+  async createProductPurchase(input: InsertProductPurchase) {
+    if (input.invoiceNumber) {
+      const [duplicateInvoice] = await db.select({ id: productPurchases.id }).from(productPurchases).where(and(
+        eq(productPurchases.productId, input.productId),
+        eq(productPurchases.invoiceNumber, input.invoiceNumber),
+      )).limit(1);
+      if (duplicateInvoice) return;
+    }
+    const [existing] = await db.select({ id: productPurchases.id }).from(productPurchases).where(and(
+      eq(productPurchases.productId, input.productId),
+      eq(productPurchases.quantity, input.quantity),
+      eq(productPurchases.purchaseDate, input.purchaseDate),
+      sql`COALESCE(${productPurchases.vendorName}, '') = ${input.vendorName ?? ""}`,
+      sql`COALESCE(${productPurchases.invoiceNumber}, '') = ${input.invoiceNumber ?? ""}`,
+      sql`COALESCE(${productPurchases.createdBy}, 0) = ${input.createdBy ?? 0}`,
+    )).limit(1);
+    if (existing) return;
+    await db.insert(productPurchases).values(input);
+  }
+
+  async getProductRequestsForAdmin(status?: string) {
+    try {
+      const rows = await db.select({
+        request: productRequests,
+        productName: products.name,
+        beauticianName: employees.name,
+      }).from(productRequests)
+        .innerJoin(products, eq(productRequests.productId, products.id))
+        .innerJoin(employees, eq(productRequests.beauticianId, employees.id))
+        .where(status ? eq(productRequests.status, status) : undefined)
+        .orderBy(desc(productRequests.createdAt), desc(productRequests.requestedAt));
+      return rows.map((r) => ({
+        ...r.request,
+        productName: r.productName,
+        beauticianName: r.beauticianName,
+      }));
+    } catch {
+      const rows = await db.execute(sql`
+        SELECT
+          pr.id,
+          pr.beautician_id as "beauticianId",
+          pr.product_id as "productId",
+          pr.quantity_requested as "quantityRequested",
+          pr.status,
+          pr.requested_at as "requestedAt",
+          p.name as "productName",
+          e.name as "beauticianName"
+        FROM product_requests pr
+        INNER JOIN products p ON p.id = pr.product_id
+        INNER JOIN employees e ON e.id = pr.beautician_id
+        ${status ? sql`WHERE pr.status = ${status}` : sql``}
+        ORDER BY pr.requested_at DESC
+      `);
+      return rows.rows as Array<ProductRequest & { productName: string; beauticianName: string }>;
+    }
+  }
+
+  async approveProductRequest(requestId: number, approvedBy: number, quantityApproved: number) {
+    let request: ProductRequest | undefined;
+    try {
+      [request] = await db.select().from(productRequests).where(eq(productRequests.id, requestId)).limit(1);
+    } catch {
+      const rows = await db.execute(sql`
+        SELECT
+          id,
+          beautician_id as "beauticianId",
+          product_id as "productId",
+          quantity_requested as "quantityRequested",
+          status,
+          requested_at as "requestedAt"
+        FROM product_requests
+        WHERE id = ${requestId}
+        LIMIT 1
+      `);
+      request = rows.rows[0] as ProductRequest | undefined;
+    }
+    if (!request) return undefined;
+
+    const requested = Number(request.quantityRequested);
+    let status: "approved" | "partially_approved" | "rejected" = "rejected";
+    if (quantityApproved >= requested) status = "approved";
+    else if (quantityApproved > 0) status = "partially_approved";
+
+    let updated: ProductRequest | undefined;
+    try {
+      [updated] = await db.update(productRequests)
+        .set({
+          status,
+          quantityApproved: String(Math.max(quantityApproved, 0)),
+          approvedAt: new Date(),
+          approvedBy,
+        })
+        .where(eq(productRequests.id, requestId))
+        .returning();
+    } catch {
+      const rows = await db.execute(sql`
+        UPDATE product_requests
+        SET status = ${status}
+        WHERE id = ${requestId}
+        RETURNING
+          id,
+          beautician_id as "beauticianId",
+          product_id as "productId",
+          quantity_requested as "quantityRequested",
+          status,
+          requested_at as "requestedAt"
+      `);
+      updated = rows.rows[0] as ProductRequest | undefined;
+    }
+
+    if (!updated) return undefined;
+
+    if (quantityApproved > 0) {
+      await this.createProductPurchase({
+        productId: updated.productId,
+        quantity: String(quantityApproved),
+        purchaseDate: new Date().toISOString().slice(0, 10),
+        vendorName: "Internal Transfer",
+        invoiceNumber: `AUTO-${updated.id}`,
+        createdBy: approvedBy,
+      });
+    }
+    return updated;
+  }
+
+  async getCancelledOrdersByCategory(category: "customer" | "beautician") {
+    const customerReasons = new Set([
+      "customer_cancelled_emergency",
+      "customer_not_available",
+      "customer_canceled_delay",
+      "demand_side",
+      "customer cancelled (emergency)",
+      "customer cancelled (delay)",
+      "unable to reach customer",
+    ]);
+    const beauticianReasons = new Set([
+      "unwell",
+      "timing_conflict",
+      "location_issue",
+      "no_action_expired",
+      "supply_side",
+      "cannot accept (unwell)",
+      "cannot accept (timing conflict)",
+      "cannot accept (location issue)",
+    ]);
+
+    let rows;
+    try {
+      rows = await db.execute(sql`
+        SELECT o.*, e.name as "employeeName"
+        FROM orders o
+        LEFT JOIN employees e ON e.id = o.employee_id
+        WHERE o.status = 'cancelled'
+        ORDER BY o.appointment_time DESC
+      `);
+    } catch {
+      rows = await db.execute(sql`
+        SELECT o.*, e.name as "employeeName"
+        FROM orders o
+        LEFT JOIN employees e ON e.id = o.employee_id
+        WHERE o.status = 'cancelled'
+        ORDER BY o.appointment_time DESC
+      `);
+    }
+
+    const mapped = rows.rows.map((r: any) => {
+      const normalizedReason = String(
+        r.cancellation_reason ?? r.acceptance_status ?? r.acceptanceStatus ?? ""
+      ).trim().toLowerCase();
+      const order: any = {
+        id: r.id,
+        customerName: r.customer_name ?? r.customerName,
+        phone: r.phone,
+        address: r.address,
+        mapsUrl: r.maps_url ?? r.mapsUrl ?? null,
+        latitude: r.latitude ?? null,
+        longitude: r.longitude ?? null,
+        services: r.services,
+        amount: r.amount,
+        duration: r.duration,
+        appointmentTime: r.appointment_time ?? r.appointmentTime,
+        paymentMode: r.payment_mode ?? r.paymentMode,
+        status: r.status,
+        employeeId: r.employee_id ?? r.employeeId ?? null,
+        hasIssue: r.has_issue ?? r.hasIssue ?? false,
+        sheetRowId: r.sheet_row_id ?? r.sheetRowId ?? null,
+        sheetDate: r.sheet_date ?? r.sheetDate ?? null,
+        sheetTime: r.sheet_time ?? r.sheetTime ?? null,
+        orderNum: r.order_num ?? r.orderNum ?? null,
+        externalOrderId: r.external_order_id ?? r.externalOrderId ?? null,
+        areaName: r.area_name ?? r.areaName ?? null,
+        beauticianHomeArea: r.beautician_home_area ?? r.beauticianHomeArea ?? null,
+        orderAreaName: r.order_area_name ?? r.orderAreaName ?? null,
+        acceptanceStatus: r.acceptance_status ?? r.acceptanceStatus ?? null,
+      };
+      return {
+        order: order as Order,
+        employeeName: r.employeeName ? String(r.employeeName) : null,
+        normalizedReason,
+      };
+    });
+
+    return mapped
+      .filter((row) => {
+        if (category === "customer") return customerReasons.has(row.normalizedReason);
+        return beauticianReasons.has(row.normalizedReason);
+      })
+      .map(({ normalizedReason, ...row }) => row);
+  }
+
+  async reallocateCancelledOrder(orderId: number) {
+    const [original] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!original) return undefined;
+
+    const [created] = await db.insert(orders).values({
+      customerName: original.customerName,
+      phone: original.phone,
+      address: original.address,
+      mapsUrl: original.mapsUrl,
+      latitude: original.latitude,
+      longitude: original.longitude,
+      services: original.services,
+      amount: original.amount,
+      duration: original.duration,
+      appointmentTime: original.appointmentTime,
+      paymentMode: original.paymentMode,
+      status: "pending",
+      employeeId: null,
+      hasIssue: false,
+      sheetRowId: original.sheetRowId ? `${original.sheetRowId}_realloc_${Date.now()}` : null,
+      sheetDate: original.sheetDate,
+      sheetTime: original.sheetTime,
+      orderNum: null,
+      externalOrderId: `${original.externalOrderId || original.id}-realloc-${Date.now()}`,
+      areaName: original.areaName,
+      beauticianHomeArea: original.beauticianHomeArea,
+      orderAreaName: original.orderAreaName,
+      acceptanceStatus: "pending",
+    }).returning();
+
+    try {
+      await db.execute(sql`UPDATE orders SET reference_order_id = ${original.id} WHERE id = ${created.id}`);
+    } catch {
+      // reference_order_id is optional until migration is applied
+    }
     return created;
   }
 
+  async upsertServiceProductMapping(input: InsertServiceProductMap) {
+    await db.insert(serviceProductMapping).values(input).onConflictDoUpdate({
+      target: [serviceProductMapping.serviceName, serviceProductMapping.productId],
+      set: {
+        quantityRequired: input.quantityRequired,
+      },
+    });
+  }
+
+  async upsertOrderDefaultProduct(input: InsertOrderDefaultProduct) {
+    await db.insert(orderDefaultProducts).values(input).onConflictDoUpdate({
+      target: [orderDefaultProducts.productId],
+      set: {
+        quantity: input.quantity,
+      },
+    });
+  }
+
+  async createProductRequest(data: InsertProductRequest) {
+    try {
+      const [created] = await db.insert(productRequests).values(data).returning();
+      return created;
+    } catch {
+      const result = await db.execute(sql`
+        INSERT INTO product_requests (beautician_id, product_id, quantity_requested, status, requested_at)
+        VALUES (${data.beauticianId}, ${data.productId}, ${data.quantityRequested}, ${data.status ?? "pending"}, now())
+        RETURNING *
+      `);
+      return result.rows[0] as ProductRequest;
+    }
+  }
+
   async getProductRequestsForBeautician(beauticianId: number) {
-    const rows = await db.select({
-      request: productRequests,
-      productName: products.name,
-    }).from(productRequests)
-      .innerJoin(products, eq(productRequests.productId, products.id))
-      .where(eq(productRequests.beauticianId, beauticianId))
-      .orderBy(desc(productRequests.requestedAt));
-    return rows.map((r) => ({ ...r.request, productName: r.productName }));
+    try {
+      const rows = await db.select({
+        request: productRequests,
+        productName: products.name,
+      }).from(productRequests)
+        .innerJoin(products, eq(productRequests.productId, products.id))
+        .where(eq(productRequests.beauticianId, beauticianId))
+        .orderBy(desc(productRequests.createdAt), desc(productRequests.requestedAt));
+      return rows.map((r) => ({ ...r.request, productName: r.productName }));
+    } catch {
+      const rows = await db.execute(sql`
+        SELECT
+          pr.id,
+          pr.beautician_id as "beauticianId",
+          pr.product_id as "productId",
+          pr.quantity_requested as "quantityRequested",
+          pr.status,
+          pr.requested_at as "requestedAt",
+          p.name as "productName"
+        FROM product_requests pr
+        INNER JOIN products p ON p.id = pr.product_id
+        WHERE pr.beautician_id = ${beauticianId}
+        ORDER BY pr.requested_at DESC
+      `);
+      return rows.rows as Array<ProductRequest & { productName: string }>;
+    }
+  }
+
+  async logMissingProduct(data: { orderId: number; externalOrderId?: string | null; serviceName: string; productName?: string | null; }) {
+    await db.insert(productsNotFound).values({
+      orderId: data.orderId,
+      externalOrderId: data.externalOrderId ?? null,
+      serviceName: data.serviceName,
+      productName: data.productName ?? null,
+    } as InsertProductsNotFound);
+  }
+
+  async getProductsNotFound(limit = 100) {
+    return await db.select().from(productsNotFound).orderBy(desc(productsNotFound.createdAt)).limit(limit);
   }
 
   async getStockSummary() {
@@ -609,40 +987,140 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
+  async getProductStock(productId: number) {
+    const result = await db.execute(sql`
+      SELECT
+        COALESCE(pp.total_purchased, 0) - COALESCE(pc.total_used, 0) AS stock
+      FROM (SELECT ${productId}::int AS product_id) pid
+      LEFT JOIN (
+        SELECT product_id, SUM(quantity) AS total_purchased
+        FROM product_purchases
+        WHERE product_id = ${productId}
+        GROUP BY product_id
+      ) pp ON pp.product_id = pid.product_id
+      LEFT JOIN (
+        SELECT product_id, SUM(quantity_used) AS total_used
+        FROM product_consumptions
+        WHERE product_id = ${productId}
+        GROUP BY product_id
+      ) pc ON pc.product_id = pid.product_id
+    `);
+    const row = (result.rows[0] as any) || {};
+    return Number(row.stock ?? 0);
+  }
+
   async autoGenerateConsumptionsForOrder(orderId: number) {
     const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order || !order.employeeId) return;
 
-    const [existingConsumption] = await db.select({ id: productConsumptions.id })
-      .from(productConsumptions)
-      .where(order.externalOrderId
-        ? or(
-            eq(productConsumptions.orderId, orderId),
-            eq(productConsumptions.externalOrderId, order.externalOrderId),
-          )
-        : eq(productConsumptions.orderId, orderId))
-      .limit(1);
-    if (existingConsumption) return;
-
-    const serviceNames = (order.services || [])
-      .map((s: any) => String(s?.name || "").trim().toLowerCase())
+    const normalizedServices = (order.services || [])
+      .map((s: any) => {
+        if (typeof s === "string") return s.trim().toLowerCase();
+        return String(s?.name || "").trim().toLowerCase();
+      })
       .filter(Boolean);
-    if (!serviceNames.length) return;
+    const serviceCounts = new Map<string, number>();
+    for (const serviceName of normalizedServices) {
+      serviceCounts.set(serviceName, (serviceCounts.get(serviceName) || 0) + 1);
+    }
 
     const allMappings = await db.select().from(serviceProductMapping);
-    const mappings = allMappings.filter((m) => serviceNames.includes(m.serviceName.trim().toLowerCase()));
-    if (!mappings.length) return;
+    const defaultProducts = await db.select().from(orderDefaultProducts);
 
-    await db.insert(productConsumptions).values(
-      mappings.map((m) => ({
+    const mappingByService = new Map<string, typeof serviceProductMapping.$inferSelect[]>();
+    const productIdSet = new Set<number>();
+    for (const mapping of allMappings) {
+      const key = mapping.serviceName.trim().toLowerCase();
+      if (!mappingByService.has(key)) {
+        mappingByService.set(key, []);
+      }
+      mappingByService.get(key)!.push(mapping);
+      productIdSet.add(mapping.productId);
+    }
+    for (const defaultProduct of defaultProducts) {
+      productIdSet.add(defaultProduct.productId);
+    }
+
+    let productRows: typeof products.$inferSelect[] = [];
+    if (productIdSet.size > 0) {
+      productRows = await db.select().from(products).where(inArray(products.id, Array.from(productIdSet)));
+    }
+    const productIndex = new Map<number, typeof products.$inferSelect>();
+    for (const product of productRows) {
+      productIndex.set(product.id, product);
+    }
+
+    const productQuantityMap = new Map<number, number>();
+    for (const [serviceName, count] of Array.from(serviceCounts.entries())) {
+      try {
+        const mappings = mappingByService.get(serviceName);
+        if (!mappings?.length) {
+          await this.logMissingProduct({
+            orderId,
+            externalOrderId: order.externalOrderId ?? null,
+            serviceName,
+          });
+          console.warn(`[Inventory Warning] No mapping found for service "${serviceName}"`);
+          continue;
+        }
+        for (const mapping of mappings) {
+          if (!productIndex.has(mapping.productId)) {
+            await this.logMissingProduct({
+              orderId,
+              externalOrderId: order.externalOrderId ?? null,
+              serviceName,
+              productName: null,
+            });
+            console.warn(`[Inventory Warning] Product not found for service "${serviceName}" in Order #${orderId}`);
+            continue;
+          }
+          const current = productQuantityMap.get(mapping.productId) || 0;
+          productQuantityMap.set(mapping.productId, current + Number(mapping.quantityRequired) * count);
+        }
+      } catch (err: any) {
+        console.warn(`[Inventory Warning] Failed to process service "${serviceName}" for Order #${orderId}: ${err.message || err}`);
+      }
+    }
+
+    for (const defaultProduct of defaultProducts) {
+      try {
+        if (!productIndex.has(defaultProduct.productId)) {
+          await this.logMissingProduct({
+            orderId,
+            externalOrderId: order.externalOrderId ?? null,
+            serviceName: "default",
+            productName: null,
+          });
+          console.warn(`[Inventory Warning] Default product missing for Order #${orderId}`);
+          continue;
+        }
+        const current = productQuantityMap.get(defaultProduct.productId) || 0;
+        productQuantityMap.set(defaultProduct.productId, current + Number(defaultProduct.quantity));
+      } catch (err: any) {
+        console.warn(`[Inventory Warning] Failed to add default product for Order #${orderId}: ${err.message || err}`);
+      }
+    }
+
+    const insertRows = Array.from(productQuantityMap.entries())
+      .filter(([, qty]) => qty > 0)
+      .map(([productId, qty]) => ({
         orderId,
-        externalOrderId: order.externalOrderId ?? null,
         beauticianId: order.employeeId!,
-        productId: m.productId,
-        quantityUsed: m.quantityRequired,
+        productId,
+        quantityUsed: String(qty),
         autoGenerated: true,
-      }))
-    );
+      }));
+
+    if (!insertRows.length) return;
+
+    const inserted = await db.insert(productConsumptions)
+      .values(insertRows)
+      .onConflictDoNothing({
+        target: [productConsumptions.orderId, productConsumptions.productId],
+      })
+      .returning({ id: productConsumptions.id });
+
+    console.log(`[Inventory] Deducted ${inserted.length} products for Order #${orderId}`);
   }
 
   async getWalletMonthlySummary(beauticianId: number, now = new Date()) {

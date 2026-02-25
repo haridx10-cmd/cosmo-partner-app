@@ -48,8 +48,30 @@ export default function SmoothOrdersPanel({ dateRange }: SmoothOrdersPanelProps)
       const url = buildUrl(api.admin.assignOrder.path, { id: orderId });
       await apiRequest("PATCH", url, { employeeId });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      queryClient.setQueriesData(
+        { queryKey: [api.admin.allOrders.path] },
+        (old: any) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((row: any) => {
+            if (row?.order?.id !== variables.orderId) return row;
+            const selected = (employeesList || []).find((e: any) => e.id === variables.employeeId);
+            return {
+              ...row,
+              employeeName: selected?.name ?? null,
+              order: {
+                ...row.order,
+                employeeId: variables.employeeId,
+                status: variables.employeeId && (row.order.status === "cancelled" || row.order.status === "expired")
+                  ? "pending"
+                  : row.order.status,
+              },
+            };
+          });
+        }
+      );
       queryClient.invalidateQueries({ queryKey: [api.admin.allOrders.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/routing'] });
       toast({ title: "Order assigned successfully" });
     },
     onError: (err: Error) => {

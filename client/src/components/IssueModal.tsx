@@ -51,7 +51,15 @@ export function IssueModal({ orderId, open, onOpenChange }: IssueModalProps) {
           <div className="space-y-3">
             <Label>Select Reason</Label>
             <RadioGroup value={type} onValueChange={setType} className="grid grid-cols-1 gap-3">
-              {["Cab Not Available", "Customer Not Reachable", "Wrong Address", "Service Dispute", "Other"].map((reason) => (
+              {[
+                "Cab Not Available",
+                "Customer Cancelled (Emergency)",
+                "Customer Cancelled (Delay)",
+                "Unable to Reach Customer",
+                "Wrong Address",
+                "Service Dispute",
+                "Other",
+              ].map((reason) => (
                 <div key={reason} className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-muted/50 transition-colors">
                   <RadioGroupItem value={reason} id={reason} />
                   <Label htmlFor={reason} className="flex-1 cursor-pointer font-normal">{reason}</Label>
