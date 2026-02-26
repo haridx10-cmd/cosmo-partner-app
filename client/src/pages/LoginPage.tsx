@@ -101,11 +101,6 @@ export default function LoginPage() {
           </CardContent>
         </Card>
 
-        <div className="mt-6 text-center text-xs text-muted-foreground">
-          <p>Demo credentials:</p>
-          <p className="mt-1">Employee: <span className="font-medium">priya</span> / <span className="font-medium">1234</span></p>
-          <p>Admin: <span className="font-medium">admin@salon.com</span> / <span className="font-medium">admin123</span></p>
-        </div>
       </div>
     </div>
   );
