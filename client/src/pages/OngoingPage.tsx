@@ -7,6 +7,25 @@ import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Clock, MapPin } from "lucide-react";
 
+function parseAppointmentWallTime(value: string | Date) {
+  if (value instanceof Date) return value;
+  const isoMatch = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
+  );
+  if (isoMatch) {
+    const [, y, m, d, hh, mm, ss] = isoMatch;
+    return new Date(
+      Number(y),
+      Number(m) - 1,
+      Number(d),
+      Number(hh),
+      Number(mm),
+      Number(ss || "0")
+    );
+  }
+  return new Date(value);
+}
+
 export default function OngoingPage() {
   const [activeTab, setActiveTab] = useState("today");
   const { data: orders } = useOrders();
@@ -18,17 +37,19 @@ export default function OngoingPage() {
   const allOrders = orders || [];
 
   const todayOrders = allOrders.filter((order) => {
-    const appt = new Date(order.appointmentTime);
+    const appt = parseAppointmentWallTime(order.appointmentTime);
     return appt >= startToday && appt < startTomorrow;
   });
 
   const tomorrowOrders = allOrders.filter((order) => {
-    const appt = new Date(order.appointmentTime);
+    const appt = parseAppointmentWallTime(order.appointmentTime);
     return appt >= startTomorrow && appt < startDayAfterTomorrow;
   });
 
   const upcomingOrders = [...allOrders].sort(
-    (a, b) => new Date(b.appointmentTime).getTime() - new Date(a.appointmentTime).getTime()
+    (a, b) =>
+      parseAppointmentWallTime(b.appointmentTime).getTime() -
+      parseAppointmentWallTime(a.appointmentTime).getTime()
   );
 
   return (
@@ -60,7 +81,7 @@ export default function OngoingPage() {
                   <div className="flex gap-4 text-sm text-gray-500">
                     <div className="flex items-center">
                       <Clock className="w-3.5 h-3.5 mr-1.5" />
-                      {format(new Date(order.appointmentTime), "h:mm a")}
+                      {format(parseAppointmentWallTime(order.appointmentTime), "h:mm a")}
                     </div>
                     <div className="flex items-center">
                       <MapPin className="w-3.5 h-3.5 mr-1.5" />
@@ -87,7 +108,7 @@ export default function OngoingPage() {
                   <div className="flex gap-4 text-sm text-gray-500">
                     <div className="flex items-center">
                       <Clock className="w-3.5 h-3.5 mr-1.5" />
-                      {format(new Date(order.appointmentTime), "h:mm a")}
+                      {format(parseAppointmentWallTime(order.appointmentTime), "h:mm a")}
                     </div>
                     <div className="flex items-center">
                       <MapPin className="w-3.5 h-3.5 mr-1.5" />
@@ -114,7 +135,7 @@ export default function OngoingPage() {
                   <div className="flex gap-4 text-sm text-gray-500">
                     <div className="flex items-center">
                       <Clock className="w-3.5 h-3.5 mr-1.5" />
-                      {format(new Date(order.appointmentTime), "MMM d, h:mm a")}
+                      {format(parseAppointmentWallTime(order.appointmentTime), "MMM d, h:mm a")}
                     </div>
                     <div className="flex items-center">
                       <MapPin className="w-3.5 h-3.5 mr-1.5" />
