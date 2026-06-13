@@ -155,7 +155,9 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
       const appointmentTime = parseSheetDateTime(sheetRow.appointmentDate, sheetRow.appointmentTime);
       const services = parseServices(sheetRow.services);
       const totalAmount = sheetRow.amount || services.reduce((sum, s) => sum + s.price, 0);
-      const duration = sheetRow.durationMinutes ?? existingDurationFromServices(services);
+      // sheetRow.durationMinutes is null when column N is blank.
+      // For NEW orders, fall back to 60. For UPDATES, preserve whatever is in DB already.
+      const newOrderDuration = sheetRow.durationMinutes ?? 60;
 
       let latitude: number | undefined;
       let longitude: number | undefined;
@@ -169,6 +171,8 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
 
       const existing = await storage.getOrderBySheetRowId(sheetRowId);
       if (existing) {
+        // If column N is blank, preserve the existing duration in DB rather than resetting to 60.
+        const duration = sheetRow.durationMinutes ?? existing.duration ?? 60;
         const updateData: any = {
           customerName: sheetRow.customerName,
           phone: sheetRow.phone,
@@ -203,7 +207,7 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           longitude,
           services,
           amount: totalAmount,
-          duration,
+          duration: newOrderDuration,
           appointmentTime,
           paymentMode: sheetRow.paymentMode,
           status: "pending",
@@ -228,10 +232,6 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
   return result;
 }
 
-function existingDurationFromServices(services: { name: string; price: number }[]) {
-  if (!services.length) return 60;
-  return 60;
-}
 
 export function startPeriodicSync(sheetId: string, range?: string, intervalMs: number = 2 * 60 * 1000) {
   if (syncInterval) {

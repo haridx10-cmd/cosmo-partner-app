@@ -8,7 +8,7 @@ import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
 import { db, pool } from "./db";
 import { orders as ordersTable, messages as messagesTable, employees as employeesTable } from "@shared/schema";
-import { eq, and, or, desc, gte as gteOp, lte as lteOp } from "drizzle-orm";
+import { eq, and, or, desc, gte as gteOp, lte as lteOp, isNull } from "drizzle-orm";
 import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
 
 export async function registerRoutes(
@@ -895,7 +895,11 @@ if (process.env.DATABASE_URL) {
           .leftJoin(employeesTable, eq(messagesTable.senderId, employeesTable.id))
           .where(
             or(
+              // Admin → employee
               and(eq(messagesTable.senderId, empId), eq(messagesTable.recipientId, withId)),
+              // Employee → admin (employee sends with recipientId=null, meaning "to admin")
+              and(eq(messagesTable.senderId, withId), isNull(messagesTable.recipientId)),
+              // Employee → admin (explicit recipientId = this admin)
               and(eq(messagesTable.senderId, withId), eq(messagesTable.recipientId, empId))
             )
           )
