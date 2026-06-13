@@ -16,4 +16,24 @@ export default defineConfig({
   dbCredentials: {
     url: normalizedDatabaseUrl,
   },
+  // Only manage tables that belong to this app — ignore any tables from other projects
+  // sharing the same Supabase database.
+  tablesFilter: [
+    "sessions",
+    "employees",
+    "orders",
+    "issues",
+    "attendance",
+    "location_history",
+    "beautician_live_tracking",
+    "order_service_sessions",
+    "products",
+    "product_purchases",
+    "product_consumptions",
+    "product_requests",
+    "service_product_mapping",
+    "products_not_found",
+    "order_default_products",
+    "messages",
+  ],
 });
