@@ -469,9 +469,8 @@ export default function OrderDetailsPage() {
           <h3 className="text-lg font-bold font-display mb-3">Services</h3>
           <div className="space-y-3">
             {(order.services as Array<{name: string, price: number}>)?.map((service, idx) => (
-              <div key={idx} className="flex justify-between items-center py-3 border-b last:border-0" data-testid={`row-service-${idx}`}>
+              <div key={idx} className="py-3 border-b last:border-0" data-testid={`row-service-${idx}`}>
                 <span className="font-medium">{service.name}</span>
-                <span className="font-bold">{service.price}</span>
               </div>
             ))}
           </div>

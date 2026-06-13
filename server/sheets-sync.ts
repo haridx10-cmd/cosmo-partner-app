@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { storage } from "./storage";
 import { randomUUID } from "crypto";
+import { parseSheetDateTime } from "@shared/appointments";
 
 let syncInterval: NodeJS.Timeout | null = null;
 
@@ -13,6 +14,7 @@ interface SheetRow {
   amount: number;
   appointmentDate: string;
   appointmentTime: string;
+  durationMinutes: number | null;
   paymentMode: string;
   employeeName: string;
   mapsUrl: string;
@@ -32,34 +34,6 @@ function parseServices(servicesStr: string): { name: string; price: number }[] {
     }
     return { name: trimmed, price: 0 };
   });
-}
-
-function parseDateTime(dateStr: string, timeStr: string): Date {
-  try {
-    const combined = `${dateStr} ${timeStr}`;
-    const parsed = new Date(combined);
-    if (!isNaN(parsed.getTime())) return parsed;
-
-    const parts = dateStr.split(/[\/\-]/);
-    if (parts.length === 3) {
-      const [day, month, year] = parts;
-      const timeParts = timeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-      if (timeParts) {
-        let hours = parseInt(timeParts[1]);
-        const minutes = parseInt(timeParts[2]);
-        const ampm = timeParts[3];
-        if (ampm) {
-          if (ampm.toUpperCase() === 'PM' && hours !== 12) hours += 12;
-          if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
-        }
-        return new Date(parseInt(year.length === 2 ? `20${year}` : year), parseInt(month) - 1, parseInt(day), hours, minutes);
-      }
-    }
-
-    return new Date();
-  } catch {
-    return new Date();
-  }
 }
 
 async function getSheetData(sheetId: string, range: string): Promise<string[][] | null> {
@@ -135,6 +109,7 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
   const orderNum = rawOrderNum ? parseInt(rawOrderNum) : null;
   const areaName = row[11]?.trim() || "";
   const externalOrderId = row[12]?.trim() || randomUUID();
+  const durationMinutes = Number.parseInt(row[13]?.trim() || "", 10);
 
   return {
     rowIndex,
@@ -145,6 +120,7 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
     amount: parseInt(row[4]?.trim() || "0") || 0,
     appointmentDate: row[5]?.trim() || "",
     appointmentTime: row[6]?.trim() || "10:00 AM",
+    durationMinutes: Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes : null,
     paymentMode: row[7]?.trim() || "cash",
     employeeName: row[8]?.trim() || "",
     mapsUrl,
@@ -154,7 +130,7 @@ function rowToSheetRow(row: string[], rowIndex: number): SheetRow | null {
   };
 }
 
-export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:M"): Promise<{ imported: number; updated: number; errors: number }> {
+export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:N"): Promise<{ imported: number; updated: number; errors: number }> {
   const result = { imported: 0, updated: 0, errors: 0 };
 
   const rows = await getSheetData(sheetId, range);
@@ -176,9 +152,10 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
         if (employee) employeeId = employee.id;
       }
 
-      const appointmentTime = parseDateTime(sheetRow.appointmentDate, sheetRow.appointmentTime);
+      const appointmentTime = parseSheetDateTime(sheetRow.appointmentDate, sheetRow.appointmentTime);
       const services = parseServices(sheetRow.services);
       const totalAmount = sheetRow.amount || services.reduce((sum, s) => sum + s.price, 0);
+      const duration = sheetRow.durationMinutes ?? existingDurationFromServices(services);
 
       let latitude: number | undefined;
       let longitude: number | undefined;
@@ -201,6 +178,7 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           longitude: longitude ?? existing.longitude ?? undefined,
           services,
           amount: totalAmount,
+          duration,
           appointmentTime,
           paymentMode: sheetRow.paymentMode,
           employeeId,
@@ -225,7 +203,7 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           longitude,
           services,
           amount: totalAmount,
-          duration: 60,
+          duration,
           appointmentTime,
           paymentMode: sheetRow.paymentMode,
           status: "pending",
@@ -248,6 +226,11 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
 
   console.log(`[Sheets Sync] Sync complete: ${result.imported} imported, ${result.updated} updated, ${result.errors} errors`);
   return result;
+}
+
+function existingDurationFromServices(services: { name: string; price: number }[]) {
+  if (!services.length) return 60;
+  return 60;
 }
 
 export function startPeriodicSync(sheetId: string, range?: string, intervalMs: number = 2 * 60 * 1000) {

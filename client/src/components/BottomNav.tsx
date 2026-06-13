@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, ListTodo, Wallet, ShoppingBag, Menu } from "lucide-react";
+import { Home, ListTodo, Wallet, ShoppingBag, MessageCircle, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function BottomNav() {
@@ -9,7 +9,7 @@ export function BottomNav() {
     { href: "/", label: "New", icon: Home },
     { href: "/ongoing", label: "Ongoing", icon: ListTodo },
     { href: "/wallet", label: "Wallet", icon: Wallet },
-    { href: "/products", label: "Inventory", icon: ShoppingBag },
+    { href: "/chat", label: "Chat", icon: MessageCircle },
     { href: "/menu", label: "Menu", icon: Menu },
   ];
 

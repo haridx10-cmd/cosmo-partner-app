@@ -7,8 +7,8 @@ import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
 import { db, pool } from "./db";
-import { orders as ordersTable } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { orders as ordersTable, messages as messagesTable, employees as employeesTable } from "@shared/schema";
+import { eq, and, or, desc, gte as gteOp, lte as lteOp } from "drizzle-orm";
 import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
 
 export async function registerRoutes(
@@ -616,6 +616,364 @@ if (process.env.DATABASE_URL) {
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Products sync failed" });
+    }
+  });
+
+  // === DELAY RISK ENGINE ===
+  // Returns per-beautician delay risk analysis for today's orders.
+  // Travel buffer is 30 minutes. Polling every 2 minutes from the client is recommended.
+  app.get("/api/admin/delay-risk", requireAdmin, async (req, res) => {
+    try {
+      const date = req.query.date ? new Date(req.query.date as string) : new Date();
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Get all active employees with orders today
+      const todaysOrders = await db
+        .select({
+          orderId: ordersTable.id,
+          employeeId: ordersTable.employeeId,
+          appointmentTime: ordersTable.appointmentTime,
+          duration: ordersTable.duration,
+          status: ordersTable.status,
+          customerName: ordersTable.customerName,
+          address: ordersTable.address,
+          orderNum: ordersTable.orderNum,
+          employeeName: employeesTable.name,
+        })
+        .from(ordersTable)
+        .leftJoin(employeesTable, eq(ordersTable.employeeId, employeesTable.id))
+        .where(
+          and(
+            gteOp(ordersTable.appointmentTime, startOfDay),
+            lteOp(ordersTable.appointmentTime, endOfDay),
+            or(
+              eq(ordersTable.status, "pending"),
+              eq(ordersTable.status, "confirmed"),
+              eq(ordersTable.status, "in_progress")
+            )
+          )
+        );
+
+      // Get active service sessions for today
+      const { orderServiceSessions } = await import("@shared/schema");
+      const activeSessions = await db
+        .select()
+        .from(orderServiceSessions)
+        .where(eq(orderServiceSessions.status, "active"));
+
+      const sessionByOrder = new Map(activeSessions.map(s => [s.orderId, s]));
+
+      // Group orders by employee
+      const byEmployee = new Map<number, typeof todaysOrders>();
+      for (const o of todaysOrders) {
+        if (!o.employeeId) continue;
+        if (!byEmployee.has(o.employeeId)) byEmployee.set(o.employeeId, []);
+        byEmployee.get(o.employeeId)!.push(o);
+      }
+
+      const TRAVEL_BUFFER_MS = 30 * 60 * 1000;
+      const now = Date.now();
+      const results: any[] = [];
+
+      for (const [empId, empOrders] of byEmployee) {
+        // Sort by appointment time
+        const sorted = [...empOrders].sort(
+          (a, b) => new Date(a.appointmentTime).getTime() - new Date(b.appointmentTime).getTime()
+        );
+
+        let runningExpectedFreeTime: number | null = null;
+
+        for (let i = 0; i < sorted.length; i++) {
+          const order = sorted[i];
+          const apptMs = new Date(order.appointmentTime).getTime();
+          const durationMs = (order.duration || 60) * 60 * 1000;
+          const session = sessionByOrder.get(order.orderId);
+
+          let expectedStartMs: number;
+          let expectedEndMs: number;
+
+          if (session) {
+            // Service already started — use real start time
+            expectedStartMs = new Date(session.serviceStartTime).getTime();
+            expectedEndMs = expectedStartMs + (session.expectedDurationMinutes || order.duration || 60) * 60 * 1000;
+          } else if (runningExpectedFreeTime !== null) {
+            // Previous order drives expected start of this one
+            expectedStartMs = runningExpectedFreeTime + TRAVEL_BUFFER_MS;
+            expectedEndMs = expectedStartMs + durationMs;
+          } else {
+            expectedStartMs = apptMs;
+            expectedEndMs = apptMs + durationMs;
+          }
+
+          runningExpectedFreeTime = expectedEndMs;
+
+          // Only flag if this is a future or current appointment
+          if (apptMs < now - 30 * 60 * 1000 && order.status === "pending") continue;
+
+          const delayMinutes = Math.round((expectedStartMs - apptMs) / 60000);
+          let riskLevel: "on_time" | "at_risk" | "delayed" = "on_time";
+          if (delayMinutes >= 30) riskLevel = "delayed";
+          else if (delayMinutes >= 1) riskLevel = "at_risk";
+
+          if (riskLevel !== "on_time") {
+            results.push({
+              employeeId: empId,
+              employeeName: order.employeeName,
+              orderId: order.orderId,
+              customerName: order.customerName,
+              address: order.address,
+              orderNum: order.orderNum,
+              appointmentTime: order.appointmentTime,
+              expectedArrivalTime: new Date(expectedStartMs).toISOString(),
+              delayMinutes,
+              riskLevel,
+              hasActiveSession: !!session,
+              sessionStartedAt: session ? session.serviceStartTime : null,
+            });
+          }
+        }
+      }
+
+      res.json({ results, computedAt: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Delay risk computation failed" });
+    }
+  });
+
+  // Employee-facing: their own upcoming delay alerts
+  app.get("/api/employee/delay-alerts", loadEmployee, async (req: any, res) => {
+    try {
+      const empId: number = req.employee.id;
+      const today = new Date();
+      const startOfDay = new Date(today);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(today);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const myOrders = await db
+        .select()
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.employeeId, empId),
+            gteOp(ordersTable.appointmentTime, startOfDay),
+            lteOp(ordersTable.appointmentTime, endOfDay),
+            or(eq(ordersTable.status, "pending"), eq(ordersTable.status, "confirmed"), eq(ordersTable.status, "in_progress"))
+          )
+        );
+
+      const { orderServiceSessions } = await import("@shared/schema");
+      const activeSessions = await db.select().from(orderServiceSessions)
+        .where(and(eq(orderServiceSessions.beauticianId, empId), eq(orderServiceSessions.status, "active")));
+      const sessionByOrder = new Map(activeSessions.map(s => [s.orderId, s]));
+
+      const sorted = [...myOrders].sort((a, b) => new Date(a.appointmentTime).getTime() - new Date(b.appointmentTime).getTime());
+      const TRAVEL_BUFFER_MS = 30 * 60 * 1000;
+      const now = Date.now();
+      const alerts: any[] = [];
+      let runningExpectedFreeTime: number | null = null;
+
+      for (let i = 0; i < sorted.length; i++) {
+        const order = sorted[i];
+        const apptMs = new Date(order.appointmentTime).getTime();
+        const durationMs = (order.duration || 60) * 60 * 1000;
+        const session = sessionByOrder.get(order.id);
+
+        let expectedStartMs: number;
+        let expectedEndMs: number;
+
+        if (session) {
+          expectedStartMs = new Date(session.serviceStartTime).getTime();
+          expectedEndMs = expectedStartMs + (session.expectedDurationMinutes || order.duration || 60) * 60 * 1000;
+        } else if (runningExpectedFreeTime !== null) {
+          expectedStartMs = runningExpectedFreeTime + TRAVEL_BUFFER_MS;
+          expectedEndMs = expectedStartMs + durationMs;
+        } else {
+          expectedStartMs = apptMs;
+          expectedEndMs = apptMs + durationMs;
+        }
+
+        runningExpectedFreeTime = expectedEndMs;
+        const delayMinutes = Math.round((expectedStartMs - apptMs) / 60000);
+
+        // Alert conditions: current active session running over, or next appointment at risk
+        const isCurrentActive = session && session.status === "active";
+        const minutesRemainingInCurrent = session
+          ? Math.round((expectedEndMs - now) / 60000)
+          : null;
+        const minutesToNextAppt = Math.round((apptMs - now) / 60000);
+
+        if (isCurrentActive && minutesRemainingInCurrent !== null) {
+          alerts.push({
+            type: "current_service",
+            orderId: order.id,
+            customerName: order.customerName,
+            minutesRemaining: minutesRemainingInCurrent,
+            isOverTime: minutesRemainingInCurrent < 0,
+          });
+        }
+
+        if (!isCurrentActive && i > 0 && minutesToNextAppt <= 60 && delayMinutes >= 1) {
+          alerts.push({
+            type: "upcoming_delay",
+            orderId: order.id,
+            customerName: order.customerName,
+            appointmentTime: order.appointmentTime,
+            minutesToAppointment: minutesToNextAppt,
+            expectedDelayMinutes: delayMinutes,
+          });
+        }
+      }
+
+      res.json({ alerts });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to compute alerts" });
+    }
+  });
+
+  // === CHAT ROUTES (SSE-based real-time) ===
+
+  // SSE clients per employee id
+  const sseClients = new Map<number, Set<any>>();
+
+  function sendSseToEmployee(empId: number, data: object) {
+    const clients = sseClients.get(empId);
+    if (!clients) return;
+    const payload = `data: ${JSON.stringify(data)}\n\n`;
+    for (const res of clients) {
+      try { res.write(payload); } catch {}
+    }
+  }
+
+  function broadcastToAdmins(data: object) {
+    // Admins subscribe with id=-1 by convention
+    sendSseToEmployee(-1, data);
+  }
+
+  app.get("/api/chat/stream", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).end();
+    const empId: number = req.session.employeeId;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const subId = req.session.role === "admin" ? -1 : empId;
+    if (!sseClients.has(subId)) sseClients.set(subId, new Set());
+    sseClients.get(subId)!.add(res);
+
+    res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+
+    req.on("close", () => {
+      sseClients.get(subId)?.delete(res);
+    });
+  });
+
+  app.get("/api/chat/messages", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    const isAdmin = req.session.role === "admin";
+    const withId = req.query.withId ? Number(req.query.withId) : null;
+
+    try {
+      let msgs;
+      if (isAdmin && withId) {
+        // Admin fetching conversation with specific employee
+        msgs = await db.select({
+          id: messagesTable.id,
+          senderId: messagesTable.senderId,
+          recipientId: messagesTable.recipientId,
+          content: messagesTable.content,
+          isRead: messagesTable.isRead,
+          createdAt: messagesTable.createdAt,
+          senderName: employeesTable.name,
+        })
+          .from(messagesTable)
+          .leftJoin(employeesTable, eq(messagesTable.senderId, employeesTable.id))
+          .where(
+            or(
+              and(eq(messagesTable.senderId, empId), eq(messagesTable.recipientId, withId)),
+              and(eq(messagesTable.senderId, withId), eq(messagesTable.recipientId, empId))
+            )
+          )
+          .orderBy(messagesTable.createdAt)
+          .limit(100);
+      } else {
+        // Employee fetching their messages with admin
+        msgs = await db.select({
+          id: messagesTable.id,
+          senderId: messagesTable.senderId,
+          recipientId: messagesTable.recipientId,
+          content: messagesTable.content,
+          isRead: messagesTable.isRead,
+          createdAt: messagesTable.createdAt,
+          senderName: employeesTable.name,
+        })
+          .from(messagesTable)
+          .leftJoin(employeesTable, eq(messagesTable.senderId, employeesTable.id))
+          .where(
+            or(
+              eq(messagesTable.senderId, empId),
+              eq(messagesTable.recipientId, empId)
+            )
+          )
+          .orderBy(messagesTable.createdAt)
+          .limit(100);
+      }
+      // Mark as read
+      await db.update(messagesTable).set({ isRead: true }).where(eq(messagesTable.recipientId, empId));
+      res.json(msgs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/chat/messages", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const senderId: number = req.session.employeeId;
+    const isAdmin = req.session.role === "admin";
+    const { content, recipientId } = req.body;
+    if (!content?.trim()) return res.status(400).json({ message: "Content required" });
+
+    try {
+      const sender = await storage.getEmployee(senderId);
+      const [msg] = await db.insert(messagesTable).values({
+        senderId,
+        recipientId: recipientId ?? null,
+        content: content.trim(),
+        isRead: false,
+      }).returning();
+
+      const payload = { type: "message", ...msg, senderName: sender?.name };
+
+      if (isAdmin) {
+        // Admin → employee
+        if (recipientId) sendSseToEmployee(recipientId, payload);
+        broadcastToAdmins(payload);
+      } else {
+        // Employee → admin
+        broadcastToAdmins(payload);
+        sendSseToEmployee(senderId, payload); // echo back
+      }
+
+      res.json(msg);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/chat/unread-count", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ count: 0 });
+    const empId: number = req.session.employeeId;
+    try {
+      const { sql: sqlFn } = await import("drizzle-orm");
+      const [row] = await db.select({ count: sqlFn<number>`count(*)::int` }).from(messagesTable).where(and(eq(messagesTable.recipientId, empId), eq(messagesTable.isRead, false)));
+      res.json({ count: row?.count ?? 0 });
+    } catch {
+      res.json({ count: 0 });
     }
   });
 

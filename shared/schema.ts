@@ -212,6 +212,24 @@ export const orderServiceSessions = pgTable("order_service_sessions", {
   index("idx_service_session_beautician").on(table.beauticianId),
 ]);
 
+// === CHAT MESSAGES ===
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  senderId: integer("sender_id").notNull().references(() => employees.id),
+  recipientId: integer("recipient_id").references(() => employees.id), // null = broadcast to all admins
+  content: text("content").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_messages_sender").on(table.senderId),
+  index("idx_messages_recipient").on(table.recipientId),
+  index("idx_messages_created").on(table.createdAt),
+]);
+
+export const insertMessageSchema = createInsertSchema(messages).omit({ id: true, createdAt: true });
+export type Message = typeof messages.$inferSelect;
+export type InsertMessage = typeof messages.$inferInsert;
+
 // === RELATIONS ===
 export const employeeRelations = relations(employees, ({ many }) => ({
   orders: many(orders),

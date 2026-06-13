@@ -1,28 +1,16 @@
 import { useState } from "react";
 import { useOrders } from "@/hooks/use-orders";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Clock, MapPin } from "lucide-react";
+import { Clock, MapPin, AlertTriangle } from "lucide-react";
 
 function parseAppointmentWallTime(value: string | Date) {
   if (value instanceof Date) return value;
-  const isoMatch = value.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
-  );
-  if (isoMatch) {
-    const [, y, m, d, hh, mm, ss] = isoMatch;
-    return new Date(
-      Number(y),
-      Number(m) - 1,
-      Number(d),
-      Number(hh),
-      Number(mm),
-      Number(ss || "0")
-    );
-  }
+  // ISO strings are UTC — let JS convert to local correctly
   return new Date(value);
 }
 
@@ -52,9 +40,38 @@ export default function OngoingPage() {
       parseAppointmentWallTime(a.appointmentTime).getTime()
   );
 
+  const { data: alertData } = useQuery<{ alerts: any[] }>({
+    queryKey: ["/api/employee/delay-alerts"],
+    queryFn: async () => {
+      const res = await fetch("/api/employee/delay-alerts");
+      if (!res.ok) return { alerts: [] };
+      return res.json();
+    },
+    refetchInterval: 2 * 60 * 1000,
+    staleTime: 90 * 1000,
+  });
+
+  const alerts = alertData?.alerts ?? [];
+  const urgentAlerts = alerts.filter((a: any) => a.type === "upcoming_delay" || (a.type === "current_service" && a.isOverTime));
+
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen bg-gray-50">
-      <h1 className="text-2xl font-bold font-display text-gray-900 mb-6">Schedule</h1>
+      <h1 className="text-2xl font-bold font-display text-gray-900 mb-4">Schedule</h1>
+
+      {urgentAlerts.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {urgentAlerts.map((a: any, i: number) => (
+            <div key={i} className={`flex items-start gap-2 px-3 py-2.5 rounded-lg text-sm font-medium ${a.isOverTime ? "bg-red-50 text-red-800 border border-red-200" : "bg-orange-50 text-orange-800 border border-orange-200"}`}>
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div>
+                {a.type === "current_service" && a.isOverTime
+                  ? `Running ${Math.abs(a.minutesRemaining)}min over time for ${a.customerName}`
+                  : `Next appt (${a.customerName}) in ${a.minutesToAppointment}min — expected ${a.expectedDelayMinutes}min delay`}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       
       <Tabs defaultValue="today" onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-3 mb-6 bg-white p-1 rounded-xl shadow-sm">
