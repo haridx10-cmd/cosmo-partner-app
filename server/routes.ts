@@ -672,6 +672,57 @@ if (process.env.DATABASE_URL) {
     }
   });
 
+  // Employee: self-mark attendance (present / absent / week_off only; half_day is admin-only)
+  app.post("/api/attendance/self-mark", loadEmployee, async (req: any, res) => {
+    try {
+      const empId: number = req.employee.id;
+      const { date, status } = req.body;
+      if (!date || !status) return res.status(400).json({ message: "date and status required" });
+
+      const selfAllowed = ["present", "absent", "week_off"];
+      if (!selfAllowed.includes(status)) {
+        return res.status(400).json({ message: "Employees can only mark: present, absent, week_off. Half-day must be set by admin." });
+      }
+
+      // week_off is only for Mon–Thu
+      const dayOfWeek = new Date(date).getDay(); // 0=Sun,5=Fri,6=Sat
+      const isFriSun = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
+      if (status === "week_off" && isFriSun) {
+        return res.status(400).json({ message: "Week-off is only available Mon–Thu" });
+      }
+
+      // Cannot mark future dates
+      const today = new Date(); today.setHours(23, 59, 59, 999);
+      if (new Date(date) > today) {
+        return res.status(400).json({ message: "Cannot mark attendance for future dates" });
+      }
+
+      // Prevent overriding admin-set half_day
+      const { sql: sqlFn } = await import("drizzle-orm");
+      const existing = await db.select().from(attendanceTable)
+        .where(and(eq(attendanceTable.employeeId, empId), sqlFn`${attendanceTable.date} = ${date}::date`))
+        .limit(1);
+
+      if (existing[0]?.status === "half_day") {
+        return res.status(400).json({ message: "Admin has marked this day as half-day. Contact admin to change." });
+      }
+
+      const [record] = await db.insert(attendanceTable).values({
+        employeeId: empId,
+        date,
+        status,
+        markedBy: null, // null = self-marked
+      }).onConflictDoUpdate({
+        target: [attendanceTable.employeeId, attendanceTable.date],
+        set: { status, markedBy: null, updatedAt: sqlFn`now()` },
+      }).returning();
+
+      res.json(record);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // Admin: mark / update attendance for an employee on a date
   app.post("/api/admin/attendance", requireAdmin, async (req: any, res) => {
     try {
