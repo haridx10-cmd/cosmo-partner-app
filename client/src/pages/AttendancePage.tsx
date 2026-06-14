@@ -66,13 +66,28 @@ export default function AttendancePage() {
   const totalAbsent = records.filter((r) => r.status === "absent").length;
   const totalWeekOff = records.filter((r) => r.status === "week_off").length;
 
-  // Fri/Sat/Sun absent counts as -2 working days (we add 0.5 per absence for simplicity)
-  const absentImpact = records
-    .filter((r) => r.status === "absent")
-    .reduce((sum, r) => {
-      const d = new Date(r.date).getDay(); // 0=Sun,6=Sat,5=Fri
-      return sum + (d === 0 || d === 5 || d === 6 ? 0.5 : 1); // Weekend absent = half working day deduction
-    }, 0);
+  /**
+   * Leave deduction rules:
+   *  Mon–Thu:
+   *    Absent   → 1 day leave
+   *    Half Day → 0.5 day leave
+   *    Week Off → 0 (entitled off)
+   *  Fri–Sun (each calendar day = 2 working days):
+   *    Absent   → 2 days leave
+   *    Half Day → 1 day leave
+   *    Week Off → NOT allowed (blocked at admin level too)
+   */
+  const isFriSunDay = (dateStr: string) => {
+    const d = new Date(dateStr).getDay(); // 0=Sun,5=Fri,6=Sat
+    return d === 0 || d === 5 || d === 6;
+  };
+
+  const totalLeaveDeducted = records.reduce((sum, r) => {
+    const weekend = isFriSunDay(r.date);
+    if (r.status === "absent")   return sum + (weekend ? 2 : 1);
+    if (r.status === "half_day") return sum + (weekend ? 1 : 0.5);
+    return sum; // present / week_off → 0
+  }, 0);
 
   return (
     <div className="pb-24 min-h-screen bg-gray-50">
@@ -172,9 +187,6 @@ export default function AttendancePage() {
             <CardContent className="p-4 text-center">
               <div className="text-3xl font-bold text-green-600">{totalPresent}</div>
               <div className="text-xs text-muted-foreground mt-0.5">Days Present</div>
-              {totalHalfDay > 0 && (
-                <div className="text-xs text-yellow-600 mt-1">+{totalHalfDay} half days</div>
-              )}
             </CardContent>
           </Card>
 
@@ -182,35 +194,33 @@ export default function AttendancePage() {
             <CardContent className="p-4 text-center">
               <div className="text-3xl font-bold text-red-500">{totalAbsent}</div>
               <div className="text-xs text-muted-foreground mt-0.5">Days Absent</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                ({absentImpact.toFixed(1)} working days)
-              </div>
             </CardContent>
           </Card>
 
           <Card className="border-0 shadow-sm">
             <CardContent className="p-4 text-center">
-              <div className="text-3xl font-bold text-blue-500">{totalWeekOff}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">Week Offs</div>
+              <div className="text-3xl font-bold text-yellow-500">{totalHalfDay}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Half Days</div>
             </CardContent>
           </Card>
 
-          <Card className="border-0 shadow-sm">
+          <Card className="border-0 shadow-sm bg-red-50">
             <CardContent className="p-4 text-center">
-              <div className="text-3xl font-bold text-gray-700">
-                {totalPresent + Math.floor(totalHalfDay / 2)}
-              </div>
-              <div className="text-xs text-muted-foreground mt-0.5">Effective Days</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                (present + half-days/2)
+              <div className="text-3xl font-bold text-red-700">{totalLeaveDeducted.toFixed(1)}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Leave Deducted</div>
+              <div className="text-[10px] text-muted-foreground mt-1 leading-tight">
+                Fri–Sun absent=2d, half=1d<br />Mon–Thu absent=1d, half=0.5d
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <p className="text-xs text-center text-muted-foreground pb-2">
-          Attendance is marked by admin. Contact admin for corrections.
-        </p>
+        <div className="bg-gray-100 rounded-lg p-3 text-xs text-muted-foreground space-y-1 pb-2">
+          <p className="font-semibold text-gray-700">Leave deduction rules</p>
+          <p>Mon–Thu: Absent = 1 day · Half Day = 0.5 day · Week Off = 0</p>
+          <p>Fri–Sun: Absent = 2 days · Half Day = 1 day · Week Off not allowed</p>
+          <p className="mt-1 italic">Attendance is marked by admin. Contact admin for corrections.</p>
+        </div>
       </div>
     </div>
   );
