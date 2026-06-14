@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors, Boxes, Clock, MessageCircle } from "lucide-react";
+import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors, Boxes, Clock, MessageCircle, CalendarCheck } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import OverviewPanel from "./OverviewPanel";
 import SmoothOrdersPanel from "./SmoothOrdersPanel";
@@ -18,6 +18,7 @@ import ProductRequestsPanel from "./ProductRequestsPanel";
 import CancellationsPanel from "./CancellationsPanel";
 import DelayRiskPanel from "./DelayRiskPanel";
 import ChatPanel from "./ChatPanel";
+import AttendancePanel from "./AttendancePanel";
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -181,6 +182,10 @@ export default function AdminDashboard() {
               <MessageCircle className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Chat</span>
             </TabsTrigger>
+            <TabsTrigger value="attendance" className="flex-1 min-w-[60px] gap-1 text-xs sm:text-sm" data-testid="tab-attendance">
+              <CalendarCheck className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Attendance</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -208,6 +213,9 @@ export default function AdminDashboard() {
           </TabsContent>
           <TabsContent value="chat">
             <ChatPanel />
+          </TabsContent>
+          <TabsContent value="attendance">
+            <AttendancePanel />
           </TabsContent>
         </Tabs>
       </div>

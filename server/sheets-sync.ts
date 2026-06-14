@@ -185,7 +185,8 @@ export async function syncFromSheet(sheetId: string, range: string = "Sheet1!A2:
           duration,
           appointmentTime,
           paymentMode: sheetRow.paymentMode,
-          employeeId,
+          // If admin has manually assigned/reassigned this order, do NOT override with sheet value
+          employeeId: (existing as any).manuallyAssigned ? existing.employeeId : employeeId,
           sheetDate: sheetRow.appointmentDate,
           sheetTime: sheetRow.appointmentTime,
           areaName: sheetRow.areaName || existing.areaName || existing.orderAreaName || undefined,

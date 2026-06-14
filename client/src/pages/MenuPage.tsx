@@ -1,10 +1,12 @@
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut } from "lucide-react";
+import { LogOut, CalendarCheck } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { useLocation } from "wouter";
 
 export default function MenuPage() {
   const { user, logout } = useAuth();
+  const [, navigate] = useLocation();
 
   return (
     <div className="pb-24 pt-10 px-4 max-w-md mx-auto min-h-screen bg-white" data-testid="menu-page">
@@ -20,6 +22,17 @@ export default function MenuPage() {
         <h2 className="text-xl font-bold font-display text-gray-900">{user?.name || "User"}</h2>
         <p className="text-muted-foreground text-sm">{user?.mobile || user?.username || user?.email}</p>
         <p className="text-xs text-primary font-medium mt-1">Beautician</p>
+      </div>
+
+      <div className="space-y-3 mb-6">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-3"
+          onClick={() => navigate("/attendance")}
+        >
+          <CalendarCheck className="w-4 h-4 text-primary" />
+          My Attendance
+        </Button>
       </div>
 
       <Button

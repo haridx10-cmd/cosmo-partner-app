@@ -56,6 +56,8 @@ export const orders = pgTable("orders", {
   beauticianHomeArea: text("beautician_home_area"),
   orderAreaName: text("order_area_name"),
   acceptanceStatus: text("acceptance_status").default("pending"),
+  // Set to true when admin manually reassigns — prevents sheet sync from overriding
+  manuallyAssigned: boolean("manually_assigned").default(false),
 }, (table) => [
   index("idx_orders_appointment_time").on(table.appointmentTime),
   index("idx_orders_employee").on(table.employeeId),
@@ -211,6 +213,28 @@ export const orderServiceSessions = pgTable("order_service_sessions", {
   index("idx_service_session_order").on(table.orderId),
   index("idx_service_session_beautician").on(table.beauticianId),
 ]);
+
+// === ATTENDANCE RECORDS ===
+// status: 'present' | 'absent' | 'week_off' | 'half_day'
+// week_off is only valid Mon-Thu. Fri-Sun can only be present/absent/half_day.
+export const attendanceRecords = pgTable("attendance_records", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  date: date("date").notNull(),
+  status: text("status").notNull(), // 'present' | 'absent' | 'week_off' | 'half_day'
+  markedBy: integer("marked_by").references(() => employees.id), // admin who marked (null = system)
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_attendance_employee").on(table.employeeId),
+  index("idx_attendance_date").on(table.date),
+  uniqueIndex("idx_attendance_employee_date").on(table.employeeId, table.date),
+]);
+
+export const insertAttendanceSchema = createInsertSchema(attendanceRecords).omit({ id: true, createdAt: true, updatedAt: true });
+export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
+export type InsertAttendanceRecord = typeof attendanceRecords.$inferInsert;
 
 // === CHAT MESSAGES ===
 export const messages = pgTable("messages", {

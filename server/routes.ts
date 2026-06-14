@@ -7,7 +7,7 @@ import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
 import { db, pool } from "./db";
-import { orders as ordersTable, messages as messagesTable, employees as employeesTable } from "@shared/schema";
+import { orders as ordersTable, messages as messagesTable, employees as employeesTable, attendanceRecords as attendanceTable } from "@shared/schema";
 import { eq, and, or, desc, gte as gteOp, lte as lteOp, isNull } from "drizzle-orm";
 import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
 
@@ -239,6 +239,13 @@ if (process.env.DATABASE_URL) {
     try {
       const { sessionId } = api.service.stop.input.parse(req.body);
       const session = await storage.stopServiceSession(sessionId);
+      // Lock the completing employee as the final assignee so sheet-sync can't override
+      if (session?.orderId && session?.beauticianId) {
+        await db.update(ordersTable).set({
+          employeeId: session.beauticianId,
+          manuallyAssigned: true,
+        }).where(eq(ordersTable.id, session.orderId));
+      }
       res.json(session);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to stop service" });
@@ -510,6 +517,7 @@ if (process.env.DATABASE_URL) {
       const shouldResetToPending = !!employeeId && (current?.status === "cancelled" || current?.status === "expired");
       const [updated] = await db.update(ordersTable).set({
         employeeId,
+        manuallyAssigned: true, // lock against sheet-sync override
         ...(shouldResetToPending ? { status: "pending" } : {}),
       }).where(eq(ordersTable.id, orderId)).returning();
       if (!updated) return res.status(404).json({ message: "Order not found" });
@@ -616,6 +624,87 @@ if (process.env.DATABASE_URL) {
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Products sync failed" });
+    }
+  });
+
+  // === ATTENDANCE ROUTES ===
+
+  // Employee: get own attendance for a month
+  app.get("/api/attendance/me", loadEmployee, async (req: any, res) => {
+    try {
+      const empId: number = req.employee.id;
+      const year = Number(req.query.year) || new Date().getFullYear();
+      const month = Number(req.query.month) || (new Date().getMonth() + 1);
+      // date range for the month
+      const from = `${year}-${String(month).padStart(2, "0")}-01`;
+      const to = `${year}-${String(month).padStart(2, "0")}-${new Date(year, month, 0).getDate()}`;
+      const { sql: sqlFn } = await import("drizzle-orm");
+      const records = await db.select().from(attendanceTable)
+        .where(and(
+          eq(attendanceTable.employeeId, empId),
+          sqlFn`${attendanceTable.date} >= ${from}::date`,
+          sqlFn`${attendanceTable.date} <= ${to}::date`
+        ));
+      res.json(records);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Admin: get attendance for any employee + month
+  app.get("/api/admin/attendance/:employeeId", requireAdmin, async (req, res) => {
+    try {
+      const empId = Number(req.params.employeeId);
+      const year = Number(req.query.year) || new Date().getFullYear();
+      const month = Number(req.query.month) || (new Date().getMonth() + 1);
+      const from = `${year}-${String(month).padStart(2, "0")}-01`;
+      const to = `${year}-${String(month).padStart(2, "0")}-${new Date(year, month, 0).getDate()}`;
+      const { sql: sqlFn } = await import("drizzle-orm");
+      const records = await db.select().from(attendanceTable)
+        .where(and(
+          eq(attendanceTable.employeeId, empId),
+          sqlFn`${attendanceTable.date} >= ${from}::date`,
+          sqlFn`${attendanceTable.date} <= ${to}::date`
+        ));
+      res.json(records);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Admin: mark / update attendance for an employee on a date
+  app.post("/api/admin/attendance", requireAdmin, async (req: any, res) => {
+    try {
+      const { employeeId, date, status, notes } = req.body;
+      if (!employeeId || !date || !status) return res.status(400).json({ message: "employeeId, date, status required" });
+
+      const validStatuses = ["present", "absent", "week_off", "half_day"];
+      if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
+
+      // week_off is only for Mon–Thu (0=Sun,1=Mon...4=Thu,5=Fri,6=Sat)
+      const dayOfWeek = new Date(date).getDay();
+      const isFriSun = dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0;
+      if (status === "week_off" && isFriSun) {
+        return res.status(400).json({ message: "Week-off is only available Mon–Thu" });
+      }
+
+      const adminId: number = req.session.employeeId;
+      // Upsert
+      const { sql: sqlFn } = await import("drizzle-orm");
+      const [record] = await db.insert(attendanceTable).values({
+        employeeId: Number(employeeId),
+        date,
+        status,
+        markedBy: adminId,
+        notes: notes || null,
+      }).onConflictDoUpdate({
+        target: [attendanceTable.employeeId, attendanceTable.date],
+        set: { status, markedBy: adminId, notes: notes || null, updatedAt: sqlFn`now()` },
+      }).returning();
+
+      res.json(record);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -897,10 +986,10 @@ if (process.env.DATABASE_URL) {
             or(
               // Admin → employee
               and(eq(messagesTable.senderId, empId), eq(messagesTable.recipientId, withId)),
-              // Employee → admin (employee sends with recipientId=null, meaning "to admin")
-              and(eq(messagesTable.senderId, withId), isNull(messagesTable.recipientId)),
-              // Employee → admin (explicit recipientId = this admin)
-              and(eq(messagesTable.senderId, withId), eq(messagesTable.recipientId, empId))
+              // Employee → admin (now always stored with recipientId = adminId)
+              and(eq(messagesTable.senderId, withId), eq(messagesTable.recipientId, empId)),
+              // Fallback: old messages stored with recipientId=null
+              and(eq(messagesTable.senderId, withId), isNull(messagesTable.recipientId))
             )
           )
           .orderBy(messagesTable.createdAt)
@@ -939,11 +1028,22 @@ if (process.env.DATABASE_URL) {
     if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
     const senderId: number = req.session.employeeId;
     const isAdmin = req.session.role === "admin";
-    const { content, recipientId } = req.body;
+    const { content } = req.body;
+    let { recipientId } = req.body;
     if (!content?.trim()) return res.status(400).json({ message: "Content required" });
 
     try {
       const sender = await storage.getEmployee(senderId);
+
+      // If employee is sending, auto-route to the first admin so messages are scoped.
+      if (!isAdmin && !recipientId) {
+        const admins = await db.select({ id: employeesTable.id })
+          .from(employeesTable)
+          .where(eq(employeesTable.role, "admin"))
+          .limit(1);
+        if (admins.length > 0) recipientId = admins[0].id;
+      }
+
       const [msg] = await db.insert(messagesTable).values({
         senderId,
         recipientId: recipientId ?? null,
@@ -954,13 +1054,13 @@ if (process.env.DATABASE_URL) {
       const payload = { type: "message", ...msg, senderName: sender?.name };
 
       if (isAdmin) {
-        // Admin → employee
+        // Admin → employee: notify employee and echo to all admin SSE clients
         if (recipientId) sendSseToEmployee(recipientId, payload);
         broadcastToAdmins(payload);
       } else {
-        // Employee → admin
+        // Employee → admin: notify all admins and echo back to employee
         broadcastToAdmins(payload);
-        sendSseToEmployee(senderId, payload); // echo back
+        sendSseToEmployee(senderId, payload);
       }
 
       res.json(msg);
