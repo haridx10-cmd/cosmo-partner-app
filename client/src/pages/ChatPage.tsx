@@ -72,20 +72,21 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <header className="bg-white border-b px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
+    // pb-16 accounts for the fixed 64px bottom nav so the input bar is never covered
+    <div className="flex flex-col bg-gray-50" style={{ height: "calc(100dvh - 64px)" }}>
+      <header className="bg-white border-b px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate("/menu")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="font-bold text-lg">Team Chat</h1>
-          <p className="text-xs text-muted-foreground">Chat with admin</p>
+          <h1 className="font-bold text-lg">Chat with Admin</h1>
+          <p className="text-xs text-muted-foreground">Messages are private</p>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
-          <p className="text-center text-muted-foreground text-sm mt-8">No messages yet. Say hi!</p>
+          <p className="text-center text-muted-foreground text-sm mt-8">No messages yet. Say hi! 👋</p>
         )}
         {messages.map(msg => {
           const isMine = msg.senderId === user?.id;
@@ -104,13 +105,15 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="p-3 border-t bg-white flex gap-2">
+      {/* Input bar — sits just above the bottom nav */}
+      <div className="p-3 border-t bg-white flex gap-2 flex-shrink-0">
         <Input
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder="Message admin..."
-          onKeyDown={e => e.key === "Enter" && handleSend()}
+          onKeyDown={e => e.key === "Enter" && !sendMutation.isPending && handleSend()}
           className="flex-1"
+          autoComplete="off"
         />
         <Button size="sm" onClick={handleSend} disabled={!input.trim() || sendMutation.isPending}>
           <Send className="w-4 h-4" />

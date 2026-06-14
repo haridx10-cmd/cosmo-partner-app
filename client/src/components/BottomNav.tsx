@@ -1,15 +1,16 @@
 import { Link, useLocation } from "wouter";
-import { Home, ListTodo, Wallet, ShoppingBag, MessageCircle, Menu } from "lucide-react";
+import { Home, ListTodo, Wallet, ShoppingBag, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function BottomNav() {
   const [location] = useLocation();
 
+  // Restored original 5 tabs — Chat is accessible via Menu → Chat with Admin
   const navItems = [
     { href: "/", label: "New", icon: Home },
     { href: "/ongoing", label: "Ongoing", icon: ListTodo },
     { href: "/wallet", label: "Wallet", icon: Wallet },
-    { href: "/chat", label: "Chat", icon: MessageCircle },
+    { href: "/products", label: "Inventory", icon: ShoppingBag },
     { href: "/menu", label: "Menu", icon: Menu },
   ];
 

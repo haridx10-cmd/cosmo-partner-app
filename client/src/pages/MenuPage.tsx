@@ -1,5 +1,5 @@
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, CalendarCheck } from "lucide-react";
+import { LogOut, CalendarCheck, MessageCircle } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
@@ -25,6 +25,14 @@ export default function MenuPage() {
       </div>
 
       <div className="space-y-3 mb-6">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-3"
+          onClick={() => navigate("/chat")}
+        >
+          <MessageCircle className="w-4 h-4 text-primary" />
+          Chat with Admin
+        </Button>
         <Button
           variant="outline"
           className="w-full justify-start gap-3"
