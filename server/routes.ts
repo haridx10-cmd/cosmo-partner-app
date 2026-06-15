@@ -7,8 +7,12 @@ import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { syncFromSheet, startPeriodicSync } from "./sheets-sync";
 import { db, pool } from "./db";
-import { orders as ordersTable, messages as messagesTable, employees as employeesTable, attendanceRecords as attendanceTable } from "@shared/schema";
-import { eq, and, or, desc, gte as gteOp, lte as lteOp, isNull } from "drizzle-orm";
+import {
+  orders as ordersTable, messages as messagesTable, employees as employeesTable,
+  attendanceRecords as attendanceTable,
+  employeeUpiProfiles, autoBalances, autoBalanceLedger, spendEntries, topUpRequests,
+} from "@shared/schema";
+import { eq, and, or, desc, gte as gteOp, lte as lteOp, isNull, sql } from "drizzle-orm";
 import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
 
 export async function registerRoutes(
@@ -1129,6 +1133,395 @@ if (process.env.DATABASE_URL) {
       res.json({ count: row?.count ?? 0 });
     } catch {
       res.json({ count: 0 });
+    }
+  });
+
+  // ============================================================
+  // AUTO BALANCE WALLET ROUTES
+  // ============================================================
+
+  // Helper: get or create auto_balance row for an employee
+  async function getOrCreateBalance(employeeId: number) {
+    const [existing] = await db.select().from(autoBalances).where(eq(autoBalances.employeeId, employeeId));
+    if (existing) return existing;
+    const [created] = await db.insert(autoBalances).values({ employeeId, currentBalance: "0" }).returning();
+    return created;
+  }
+
+  // GET /api/auto-balance/me — employee's own balance + monthly spends
+  app.get("/api/auto-balance/me", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    try {
+      const balance = await getOrCreateBalance(empId);
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const [spendRow] = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)::text` })
+        .from(spendEntries)
+        .where(and(eq(spendEntries.employeeId, empId), gteOp(spendEntries.createdAt, monthStart)));
+      const [upiProfile] = await db.select().from(employeeUpiProfiles).where(eq(employeeUpiProfiles.employeeId, empId));
+      const [pendingReq] = await db.select({ count: sql<number>`count(*)::int` })
+        .from(topUpRequests)
+        .where(and(eq(topUpRequests.employeeId, empId), eq(topUpRequests.status, "pending")));
+      res.json({
+        currentBalance: parseFloat(balance.currentBalance ?? "0"),
+        spendsThisMonth: parseFloat(spendRow?.total ?? "0"),
+        upiNumber: upiProfile?.upiNumber ?? null,
+        qrCodeData: upiProfile?.qrCodeData ?? null,
+        hasPendingTopUp: (pendingReq?.count ?? 0) > 0,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/auto-balance/ledger — transaction history for employee
+  app.get("/api/auto-balance/ledger", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    try {
+      const rows = await db.select().from(autoBalanceLedger)
+        .where(eq(autoBalanceLedger.employeeId, empId))
+        .orderBy(desc(autoBalanceLedger.createdAt))
+        .limit(50);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/auto-balance/spend-entries — employee's own spend entries
+  app.get("/api/auto-balance/spend-entries", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    try {
+      const rows = await db.select().from(spendEntries)
+        .where(eq(spendEntries.employeeId, empId))
+        .orderBy(desc(spendEntries.createdAt))
+        .limit(50);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/spend/submit — employee submits a spend (base64 screenshot + amount)
+  app.post("/api/spend/submit", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    const { amount, screenshotData, screenshotMime, notes } = req.body;
+    if (!amount || isNaN(parseFloat(amount))) return res.status(400).json({ message: "Invalid amount" });
+    const amt = parseFloat(amount);
+    try {
+      const balance = await getOrCreateBalance(empId);
+      const newBalance = parseFloat(balance.currentBalance ?? "0") - amt;
+      // Update balance
+      await db.update(autoBalances).set({ currentBalance: String(newBalance), lastUpdatedAt: new Date() }).where(eq(autoBalances.employeeId, empId));
+      // Insert spend entry (status: approved)
+      const [spend] = await db.insert(spendEntries).values({
+        employeeId: empId,
+        amount: String(amt),
+        screenshotData: screenshotData ?? null,
+        screenshotMime: screenshotMime ?? "image/jpeg",
+        notes: notes ?? null,
+        status: "approved",
+      }).returning();
+      // Ledger entry
+      await db.insert(autoBalanceLedger).values({
+        employeeId: empId,
+        type: "spend",
+        amount: String(-amt),
+        balanceAfter: String(newBalance),
+        relatedSpendEntryId: spend.id,
+        notes: notes ?? null,
+      });
+      res.json({ spend, newBalance });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/top-up-request — employee requests a top-up
+  app.post("/api/top-up-request", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    const { requestedAmount, notes } = req.body;
+    try {
+      const [req2] = await db.insert(topUpRequests).values({
+        employeeId: empId,
+        requestedAmount: requestedAmount ? String(requestedAmount) : null,
+        notes: notes ?? null,
+        status: "pending",
+      }).returning();
+      res.json(req2);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ---- ADMIN AUTO BALANCE ROUTES ----
+
+  // GET /api/admin/auto-balance — all employees with balance info
+  app.get("/api/admin/auto-balance", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const emps = await db.select().from(employeesTable).where(eq(employeesTable.role, "employee"));
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const result = await Promise.all(emps.map(async (emp) => {
+        const balance = await getOrCreateBalance(emp.id);
+        const [spendRow] = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)::text` })
+          .from(spendEntries)
+          .where(and(eq(spendEntries.employeeId, emp.id), gteOp(spendEntries.createdAt, monthStart)));
+        const [upiProfile] = await db.select().from(employeeUpiProfiles).where(eq(employeeUpiProfiles.employeeId, emp.id));
+        const [pendingReqs] = await db.select({ count: sql<number>`count(*)::int` })
+          .from(topUpRequests)
+          .where(and(eq(topUpRequests.employeeId, emp.id), eq(topUpRequests.status, "pending")));
+        return {
+          id: emp.id,
+          name: emp.name,
+          currentBalance: parseFloat(balance.currentBalance ?? "0"),
+          spendsThisMonth: parseFloat(spendRow?.total ?? "0"),
+          upiNumber: upiProfile?.upiNumber ?? null,
+          qrCodeData: upiProfile?.qrCodeData ?? null,
+          pendingTopUpCount: pendingReqs?.count ?? 0,
+        };
+      }));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/auto-balance/:empId/top-up — admin adds balance
+  app.post("/api/admin/auto-balance/:empId/top-up", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const empId = parseInt(req.params.empId);
+    const { amount, notes } = req.body;
+    if (!amount || isNaN(parseFloat(amount))) return res.status(400).json({ message: "Invalid amount" });
+    const amt = parseFloat(amount);
+    try {
+      const balance = await getOrCreateBalance(empId);
+      const newBalance = parseFloat(balance.currentBalance ?? "0") + amt;
+      await db.update(autoBalances).set({ currentBalance: String(newBalance), lastUpdatedAt: new Date() }).where(eq(autoBalances.employeeId, empId));
+      await db.insert(autoBalanceLedger).values({
+        employeeId: empId,
+        type: "top_up",
+        amount: String(amt),
+        balanceAfter: String(newBalance),
+        createdById: req.session.employeeId,
+        notes: notes ?? null,
+      });
+      res.json({ newBalance });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/spend-entries — all spend entries (or filtered by empId)
+  app.get("/api/admin/spend-entries", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const empId = req.query.empId ? parseInt(req.query.empId as string) : null;
+      const rows = await db.select({
+        id: spendEntries.id,
+        employeeId: spendEntries.employeeId,
+        employeeName: employeesTable.name,
+        amount: spendEntries.amount,
+        screenshotData: spendEntries.screenshotData,
+        screenshotMime: spendEntries.screenshotMime,
+        notes: spendEntries.notes,
+        status: spendEntries.status,
+        reviewedById: spendEntries.reviewedById,
+        reviewedAt: spendEntries.reviewedAt,
+        createdAt: spendEntries.createdAt,
+      }).from(spendEntries)
+        .leftJoin(employeesTable, eq(spendEntries.employeeId, employeesTable.id))
+        .where(empId ? eq(spendEntries.employeeId, empId) : undefined)
+        .orderBy(desc(spendEntries.createdAt))
+        .limit(100);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/spend-entries/:id/reject — reject a spend, reverse balance
+  app.patch("/api/admin/spend-entries/:id/reject", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const spendId = parseInt(req.params.id);
+    const { notes } = req.body;
+    try {
+      const [spend] = await db.select().from(spendEntries).where(eq(spendEntries.id, spendId));
+      if (!spend) return res.status(404).json({ message: "Not found" });
+      if (spend.status !== "approved") return res.status(400).json({ message: "Can only reject approved entries" });
+      // Reverse balance
+      const balance = await getOrCreateBalance(spend.employeeId);
+      const reverseAmt = parseFloat(spend.amount ?? "0");
+      const newBalance = parseFloat(balance.currentBalance ?? "0") + reverseAmt;
+      await db.update(autoBalances).set({ currentBalance: String(newBalance), lastUpdatedAt: new Date() }).where(eq(autoBalances.employeeId, spend.employeeId));
+      // Update spend entry
+      await db.update(spendEntries).set({ status: "rejected", reviewedById: req.session.employeeId, reviewedAt: new Date() }).where(eq(spendEntries.id, spendId));
+      // Ledger entry for reversal
+      await db.insert(autoBalanceLedger).values({
+        employeeId: spend.employeeId,
+        type: "reversal",
+        amount: String(reverseAmt),
+        balanceAfter: String(newBalance),
+        createdById: req.session.employeeId,
+        relatedSpendEntryId: spendId,
+        notes: notes ?? "Spend rejected by admin",
+      });
+      res.json({ newBalance });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/spend-entries/:id/verify — mark spend as verified
+  app.patch("/api/admin/spend-entries/:id/verify", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const spendId = parseInt(req.params.id);
+    try {
+      await db.update(spendEntries).set({ status: "verified", reviewedById: req.session.employeeId, reviewedAt: new Date() }).where(eq(spendEntries.id, spendId));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/top-up-requests — all pending/recent top-up requests
+  app.get("/api/admin/top-up-requests", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const rows = await db.select({
+        id: topUpRequests.id,
+        employeeId: topUpRequests.employeeId,
+        employeeName: employeesTable.name,
+        requestedAmount: topUpRequests.requestedAmount,
+        status: topUpRequests.status,
+        notes: topUpRequests.notes,
+        createdAt: topUpRequests.createdAt,
+        acknowledgedAt: topUpRequests.acknowledgedAt,
+        fulfilledAt: topUpRequests.fulfilledAt,
+      }).from(topUpRequests)
+        .leftJoin(employeesTable, eq(topUpRequests.employeeId, employeesTable.id))
+        .orderBy(desc(topUpRequests.createdAt))
+        .limit(100);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/top-up-requests/:id/acknowledge
+  app.patch("/api/admin/top-up-requests/:id/acknowledge", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const reqId = parseInt(req.params.id);
+    try {
+      await db.update(topUpRequests).set({ status: "acknowledged", acknowledgedAt: new Date(), acknowledgedById: req.session.employeeId }).where(eq(topUpRequests.id, reqId));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/top-up-requests/:id/fulfill
+  app.patch("/api/admin/top-up-requests/:id/fulfill", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const reqId = parseInt(req.params.id);
+    try {
+      await db.update(topUpRequests).set({ status: "fulfilled", fulfilledAt: new Date(), fulfilledById: req.session.employeeId }).where(eq(topUpRequests.id, reqId));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/employee-upi/:employeeId
+  app.get("/api/admin/employee-upi/:employeeId", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const empId = parseInt(req.params.employeeId);
+    try {
+      const [profile] = await db.select().from(employeeUpiProfiles).where(eq(employeeUpiProfiles.employeeId, empId));
+      res.json(profile ?? { employeeId: empId, upiNumber: null, qrCodeData: null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/admin/employee-upi/:employeeId
+  app.put("/api/admin/employee-upi/:employeeId", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const empId = parseInt(req.params.employeeId);
+    const { upiNumber, qrCodeData } = req.body;
+    try {
+      const [existing] = await db.select().from(employeeUpiProfiles).where(eq(employeeUpiProfiles.employeeId, empId));
+      if (existing) {
+        await db.update(employeeUpiProfiles).set({ upiNumber: upiNumber ?? null, qrCodeData: qrCodeData ?? null, updatedAt: new Date() }).where(eq(employeeUpiProfiles.employeeId, empId));
+      } else {
+        await db.insert(employeeUpiProfiles).values({ employeeId: empId, upiNumber: upiNumber ?? null, qrCodeData: qrCodeData ?? null });
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/auto-balance/ledger/:empId
+  app.get("/api/admin/auto-balance/ledger/:empId", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const empId = parseInt(req.params.empId);
+    try {
+      const rows = await db.select().from(autoBalanceLedger)
+        .where(eq(autoBalanceLedger.employeeId, empId))
+        .orderBy(desc(autoBalanceLedger.createdAt))
+        .limit(50);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/notifications — zero-balance employees + pending top-up counts
+  app.get("/api/admin/notifications", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const [pendingRow] = await db.select({ count: sql<number>`count(*)::int` })
+        .from(topUpRequests).where(eq(topUpRequests.status, "pending"));
+      const zeroBalanceRows = await db.select({ employeeId: autoBalances.employeeId })
+        .from(autoBalances)
+        .where(sql`${autoBalances.currentBalance}::numeric <= 0`);
+      res.json({
+        pendingTopUpCount: pendingRow?.count ?? 0,
+        zeroBalanceCount: zeroBalanceRows.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 

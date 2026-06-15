@@ -19,6 +19,7 @@ import ProductsPage from "@/pages/ProductsPage";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import ChatPage from "@/pages/ChatPage";
 import AttendancePage from "@/pages/AttendancePage";
+import AutoBalancePage from "@/pages/AutoBalancePage";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -83,6 +84,7 @@ function Router() {
       <Route path="/menu" component={() => <ProtectedRoute component={MenuPage} />} />
       <Route path="/chat" component={() => <ProtectedRoute component={ChatPage} />} />
       <Route path="/attendance" component={() => <ProtectedRoute component={AttendancePage} />} />
+      <Route path="/auto-balance" component={() => <ProtectedRoute component={AutoBalancePage} />} />
       <Route path="/admin" component={() => <AdminRoute component={AdminDashboard} />} />
       <Route component={NotFound} />
     </Switch>

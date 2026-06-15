@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors, Boxes, Clock, MessageCircle, CalendarCheck } from "lucide-react";
+import { LayoutDashboard, ShoppingBag, AlertTriangle, MapPin, Users, LogOut, CalendarIcon, Route, Scissors, Boxes, Clock, MessageCircle, CalendarCheck, Wallet } from "lucide-react";
 import { format, startOfDay, endOfDay } from "date-fns";
 import OverviewPanel from "./OverviewPanel";
 import SmoothOrdersPanel from "./SmoothOrdersPanel";
@@ -19,6 +20,7 @@ import CancellationsPanel from "./CancellationsPanel";
 import DelayRiskPanel from "./DelayRiskPanel";
 import ChatPanel from "./ChatPanel";
 import AttendancePanel from "./AttendancePanel";
+import AutoBalancePanel from "./AutoBalancePanel";
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -50,6 +52,13 @@ export default function AdminDashboard() {
 
   const isToday = startOfDay(new Date()).getTime() === startOfDay(dateRange.from).getTime()
     && startOfDay(new Date()).getTime() === startOfDay(dateRange.to).getTime();
+
+  const { data: adminNotifs } = useQuery<{ pendingTopUpCount: number; zeroBalanceCount: number }>({
+    queryKey: ["/api/admin/notifications"],
+    queryFn: () => fetch("/api/admin/notifications").then(r => r.json()),
+    refetchInterval: 30000,
+  });
+  const notifCount = (adminNotifs?.pendingTopUpCount ?? 0) + (adminNotifs?.zeroBalanceCount ?? 0);
 
   return (
     <div className="min-h-screen bg-gray-50" data-testid="admin-dashboard">
@@ -186,6 +195,15 @@ export default function AdminDashboard() {
               <CalendarCheck className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Attendance</span>
             </TabsTrigger>
+            <TabsTrigger value="auto-balance" className="flex-1 min-w-[60px] gap-1 text-xs sm:text-sm relative" data-testid="tab-auto-balance">
+              <Wallet className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Auto Balance</span>
+              {notifCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                  {notifCount > 9 ? "9+" : notifCount}
+                </span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -216,6 +234,9 @@ export default function AdminDashboard() {
           </TabsContent>
           <TabsContent value="attendance">
             <AttendancePanel />
+          </TabsContent>
+          <TabsContent value="auto-balance">
+            <AutoBalancePanel />
           </TabsContent>
         </Tabs>
       </div>

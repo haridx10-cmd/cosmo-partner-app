@@ -63,6 +63,73 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Run additive DB migrations on startup (all idempotent via IF NOT EXISTS)
+  try {
+    const { pool } = await import("./db");
+    const client = await pool.connect();
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS employee_upi_profiles (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id),
+        upi_number TEXT,
+        qr_code_data TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS auto_balances (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL UNIQUE REFERENCES employees(id),
+        current_balance NUMERIC NOT NULL DEFAULT 0,
+        last_updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS auto_balance_ledger (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        type TEXT NOT NULL,
+        amount NUMERIC NOT NULL,
+        balance_after NUMERIC NOT NULL,
+        created_by_id INTEGER REFERENCES employees(id),
+        related_spend_entry_id INTEGER,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_ledger_employee ON auto_balance_ledger(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_ledger_created ON auto_balance_ledger(created_at);
+      CREATE TABLE IF NOT EXISTS spend_entries (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        amount NUMERIC NOT NULL,
+        screenshot_data TEXT,
+        screenshot_mime TEXT DEFAULT 'image/jpeg',
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'approved',
+        reviewed_by_id INTEGER REFERENCES employees(id),
+        reviewed_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_spend_employee ON spend_entries(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_spend_status ON spend_entries(status);
+      CREATE TABLE IF NOT EXISTS top_up_requests (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        requested_amount NUMERIC,
+        status TEXT NOT NULL DEFAULT 'pending',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        acknowledged_at TIMESTAMP,
+        acknowledged_by_id INTEGER REFERENCES employees(id),
+        fulfilled_at TIMESTAMP,
+        fulfilled_by_id INTEGER REFERENCES employees(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_topup_employee ON top_up_requests(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_topup_status ON top_up_requests(status);
+    `);
+    client.release();
+    console.log("[Migrations] Auto-balance tables ready");
+  } catch (e: any) {
+    console.error("[Migrations] Failed:", e.message);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

@@ -305,3 +305,84 @@ export type ProductsNotFound = typeof productsNotFound.$inferSelect;
 export type InsertProductsNotFound = typeof productsNotFound.$inferInsert;
 export type OrderDefaultProduct = typeof orderDefaultProducts.$inferSelect;
 export type InsertOrderDefaultProduct = typeof orderDefaultProducts.$inferInsert;
+
+// ================================================================
+// === AUTO BALANCE WALLET SYSTEM (additive — do not modify above)
+// ================================================================
+
+// UPI / QR code per employee (admin-editable, employee read-only)
+export const employeeUpiProfiles = pgTable("employee_upi_profiles", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().unique().references(() => employees.id),
+  upiNumber: text("upi_number"),
+  qrCodeData: text("qr_code_data"), // base64-encoded image or URL
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// One balance record per employee (carries forward, no monthly reset)
+export const autoBalances = pgTable("auto_balances", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().unique().references(() => employees.id),
+  currentBalance: numeric("current_balance").notNull().default("0"),
+  lastUpdatedAt: timestamp("last_updated_at").defaultNow(),
+});
+
+// Every balance change is logged here
+export const autoBalanceLedger = pgTable("auto_balance_ledger", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  type: text("type").notNull(), // 'top_up' | 'spend' | 'reversal' | 'adjustment'
+  amount: numeric("amount").notNull(), // positive = credit, negative = debit
+  balanceAfter: numeric("balance_after").notNull(),
+  createdById: integer("created_by_id").references(() => employees.id),
+  relatedSpendEntryId: integer("related_spend_entry_id"), // FK set after spend_entries insert
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_ledger_employee").on(table.employeeId),
+  index("idx_ledger_created").on(table.createdAt),
+]);
+
+// Employee spend submissions (screenshot + amount)
+export const spendEntries = pgTable("spend_entries", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  amount: numeric("amount").notNull(),
+  screenshotData: text("screenshot_data"), // base64 encoded (jpeg/png)
+  screenshotMime: text("screenshot_mime").default("image/jpeg"),
+  notes: text("notes"),
+  // approved = default after submission; verified = admin confirmed; rejected = reversed
+  status: text("status").notNull().default("approved"),
+  reviewedById: integer("reviewed_by_id").references(() => employees.id),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_spend_employee").on(table.employeeId),
+  index("idx_spend_created").on(table.createdAt),
+  index("idx_spend_status").on(table.status),
+]);
+
+// Employee top-up requests (pending → acknowledged → fulfilled)
+export const topUpRequests = pgTable("top_up_requests", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  requestedAmount: numeric("requested_amount"), // employee's suggested amount (optional)
+  status: text("status").notNull().default("pending"), // 'pending' | 'acknowledged' | 'fulfilled'
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  acknowledgedById: integer("acknowledged_by_id").references(() => employees.id),
+  fulfilledAt: timestamp("fulfilled_at"),
+  fulfilledById: integer("fulfilled_by_id").references(() => employees.id),
+}, (table) => [
+  index("idx_topup_employee").on(table.employeeId),
+  index("idx_topup_status").on(table.status),
+]);
+
+// === AUTO BALANCE TYPES ===
+export type EmployeeUpiProfile = typeof employeeUpiProfiles.$inferSelect;
+export type AutoBalance = typeof autoBalances.$inferSelect;
+export type AutoBalanceLedgerEntry = typeof autoBalanceLedger.$inferSelect;
+export type SpendEntry = typeof spendEntries.$inferSelect;
+export type TopUpRequest = typeof topUpRequests.$inferSelect;
