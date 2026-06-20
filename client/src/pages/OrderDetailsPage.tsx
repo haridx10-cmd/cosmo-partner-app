@@ -1,7 +1,9 @@
 import { useOrder, useUpdateOrderStatus } from "@/hooks/use-orders";
 import { useRoute } from "wouter";
-import { Loader2, MapPin, Phone, User, Clock, Navigation, AlertTriangle, CheckCircle, PhoneCall, Play, Square, Timer } from "lucide-react";
+import { Loader2, MapPin, Phone, User, Clock, Navigation, AlertTriangle, CheckCircle, PhoneCall, Play, Square, Timer, IndianRupee } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { IssueModal } from "@/components/IssueModal";
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -220,6 +222,14 @@ export default function OrderDetailsPage() {
   const [acceptChoice, setAcceptChoice] = useState("accept");
   const { toast } = useToast();
 
+  // Payment capture dialog state
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMode, setPayMode] = useState<"cash" | "upi">("cash");
+  const [payScreenshot, setPayScreenshot] = useState<string | null>(null);
+  const [payMime, setPayMime] = useState("image/jpeg");
+  const [payNotes, setPayNotes] = useState("");
+
   const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeAttempted, setGeocodeAttempted] = useState(false);
@@ -266,6 +276,48 @@ export default function OrderDetailsPage() {
       toast({ title: "Failed to stop service", description: err.message, variant: "destructive" });
     },
   });
+
+  const submitPayment = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/payments/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: id,
+          amount: parseFloat(payAmount),
+          paymentMode: payMode,
+          screenshotData: payScreenshot,
+          screenshotMime: payMime,
+          notes: payNotes || null,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message);
+      return res.json();
+    },
+    onSuccess: async () => {
+      // Mark order as completed after payment is logged
+      await fetch(`/api/orders/${id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+        credentials: "include",
+      });
+      queryClient.invalidateQueries({ queryKey: [api.orders.get.path, id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet/monthly"] });
+      setShowPaymentDialog(false);
+      toast({ title: "Order completed!", description: `₹${payAmount} (${payMode}) logged.` });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const handleImagePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPayMime(file.type || "image/jpeg");
+    const reader = new FileReader();
+    reader.onload = () => setPayScreenshot((reader.result as string).split(",")[1]);
+    reader.readAsDataURL(file);
+  };
 
   const resolvedCoords = useMemo(() => {
     if (order?.latitude && order?.longitude) {
@@ -374,10 +426,10 @@ export default function OrderDetailsPage() {
             <div className="grid grid-cols-2 gap-3">
               <Button
                 className="h-12 font-semibold"
-                onClick={() => updateStatus.mutate({ id, status: 'completed' })}
+                onClick={() => { setPayAmount(String(order?.amount ?? "")); setShowPaymentDialog(true); }}
                 data-testid="button-complete-order"
               >
-                <CheckCircle className="w-5 h-5 mr-2" /> Complete Job
+                <IndianRupee className="w-5 h-5 mr-2" /> Complete + Pay
               </Button>
               <Button
                 variant="outline"
@@ -502,6 +554,69 @@ export default function OrderDetailsPage() {
         open={issueModalOpen}
         onOpenChange={setIssueModalOpen}
       />
+
+      {/* Payment capture dialog */}
+      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+        <DialogContent className="max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IndianRupee className="w-4 h-4 text-primary" /> Complete Order — Log Payment
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <label className="text-sm font-medium block mb-1">Amount Received (₹)</label>
+              <Input
+                type="number"
+                min="0"
+                value={payAmount}
+                onChange={e => setPayAmount(e.target.value)}
+                placeholder="Enter amount"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-2">Payment Mode</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayMode("cash")}
+                  className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${payMode === "cash" ? "bg-primary text-white border-primary" : "border-gray-200 text-gray-600"}`}
+                >
+                  💵 Cash
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayMode("upi")}
+                  className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${payMode === "upi" ? "bg-primary text-white border-primary" : "border-gray-200 text-gray-600"}`}
+                >
+                  📱 UPI
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">Payment Screenshot (optional)</label>
+              <input
+                type="file"
+                accept="image/*"
+                className="block w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary/10 file:text-primary"
+                onChange={handleImagePick}
+              />
+              {payScreenshot && <p className="text-xs text-green-600 mt-1">✓ Screenshot added</p>}
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">Notes (optional)</label>
+              <Input placeholder="Any notes" value={payNotes} onChange={e => setPayNotes(e.target.value)} />
+            </div>
+            <Button
+              className="w-full"
+              disabled={!payAmount || isNaN(parseFloat(payAmount)) || submitPayment.isPending}
+              onClick={() => submitPayment.mutate()}
+            >
+              {submitPayment.isPending ? "Saving..." : `Confirm ₹${payAmount || "0"} (${payMode.toUpperCase()})`}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

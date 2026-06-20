@@ -386,3 +386,26 @@ export type AutoBalance = typeof autoBalances.$inferSelect;
 export type AutoBalanceLedgerEntry = typeof autoBalanceLedger.$inferSelect;
 export type SpendEntry = typeof spendEntries.$inferSelect;
 export type TopUpRequest = typeof topUpRequests.$inferSelect;
+
+// === PAYMENT ENTRIES ===
+export const paymentEntries = pgTable("payment_entries", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  orderId: integer("order_id").references(() => orders.id), // null for ad-hoc
+  amount: numeric("amount").notNull(),
+  paymentMode: text("payment_mode").notNull().default("cash"), // 'cash' | 'upi'
+  screenshotData: text("screenshot_data"),
+  screenshotMime: text("screenshot_mime").default("image/jpeg"),
+  notes: text("notes"),
+  customerName: text("customer_name"), // for ad-hoc only
+  isAdhoc: integer("is_adhoc").notNull().default(0), // 0=order-linked, 1=ad-hoc
+  status: text("status").notNull().default("approved"), // 'approved' | 'pending_approval' | 'rejected'
+  reviewedById: integer("reviewed_by_id").references(() => employees.id),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_pe_employee").on(table.employeeId),
+  index("idx_pe_status").on(table.status),
+  index("idx_pe_created").on(table.createdAt),
+]);
+export type PaymentEntry = typeof paymentEntries.$inferSelect;

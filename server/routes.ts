@@ -11,6 +11,7 @@ import {
   orders as ordersTable, messages as messagesTable, employees as employeesTable,
   attendanceRecords as attendanceTable,
   employeeUpiProfiles, autoBalances, autoBalanceLedger, spendEntries, topUpRequests,
+  paymentEntries,
 } from "@shared/schema";
 import { eq, and, or, desc, gte as gteOp, lte as lteOp, isNull, sql } from "drizzle-orm";
 import { startPeriodicInventorySheetsSync, syncAllInventorySheets } from "./products-sync";
@@ -1506,19 +1507,194 @@ if (process.env.DATABASE_URL) {
   });
 
   // GET /api/admin/notifications — zero-balance employees + pending top-up counts
+  // (notifications route defined below with full payment support)
+
+  // ============================================================
+  // PAYMENT ENTRIES ROUTES
+  // ============================================================
+
+  // POST /api/payments/order — called after completing an order
+  app.post("/api/payments/order", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    const { orderId, amount, paymentMode, screenshotData, screenshotMime, notes } = req.body;
+    if (!orderId || !amount || isNaN(parseFloat(amount))) return res.status(400).json({ message: "orderId and amount required" });
+    try {
+      const [entry] = await db.insert(paymentEntries).values({
+        employeeId: empId,
+        orderId: Number(orderId),
+        amount: String(amount),
+        paymentMode: paymentMode ?? "cash",
+        screenshotData: screenshotData ?? null,
+        screenshotMime: screenshotMime ?? "image/jpeg",
+        notes: notes ?? null,
+        isAdhoc: 0,
+        status: "approved",
+      }).returning();
+      res.json(entry);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/payments/adhoc — ad-hoc payment (no order), requires admin approval
+  app.post("/api/payments/adhoc", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    const { amount, paymentMode, screenshotData, screenshotMime, notes, customerName } = req.body;
+    if (!amount || isNaN(parseFloat(amount))) return res.status(400).json({ message: "amount required" });
+    try {
+      const [entry] = await db.insert(paymentEntries).values({
+        employeeId: empId,
+        orderId: null,
+        amount: String(amount),
+        paymentMode: paymentMode ?? "cash",
+        screenshotData: screenshotData ?? null,
+        screenshotMime: screenshotMime ?? "image/jpeg",
+        notes: notes ?? null,
+        customerName: customerName ?? null,
+        isAdhoc: 1,
+        status: "pending_approval",
+      }).returning();
+      res.json(entry);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/payments/me — employee's own payment history
+  app.get("/api/payments/me", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const empId: number = req.session.employeeId;
+    try {
+      const rows = await db.select().from(paymentEntries)
+        .where(eq(paymentEntries.employeeId, empId))
+        .orderBy(desc(paymentEntries.createdAt))
+        .limit(50);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/payments — all payment entries (optionally filtered by empId)
+  app.get("/api/admin/payments", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const empId = req.query.empId ? parseInt(req.query.empId as string) : null;
+      const rows = await db.select({
+        id: paymentEntries.id,
+        employeeId: paymentEntries.employeeId,
+        employeeName: employeesTable.name,
+        orderId: paymentEntries.orderId,
+        amount: paymentEntries.amount,
+        paymentMode: paymentEntries.paymentMode,
+        screenshotData: paymentEntries.screenshotData,
+        screenshotMime: paymentEntries.screenshotMime,
+        notes: paymentEntries.notes,
+        customerName: paymentEntries.customerName,
+        isAdhoc: paymentEntries.isAdhoc,
+        status: paymentEntries.status,
+        reviewedById: paymentEntries.reviewedById,
+        reviewedAt: paymentEntries.reviewedAt,
+        createdAt: paymentEntries.createdAt,
+      }).from(paymentEntries)
+        .leftJoin(employeesTable, eq(paymentEntries.employeeId, employeesTable.id))
+        .where(empId ? eq(paymentEntries.employeeId, empId) : undefined)
+        .orderBy(desc(paymentEntries.createdAt))
+        .limit(200);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/admin/payments/revenue — per-beautician monthly revenue summary
+  app.get("/api/admin/payments/revenue", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const emps = await db.select().from(employeesTable).where(eq(employeesTable.role, "employee"));
+      const result = await Promise.all(emps.map(async (emp) => {
+        const [monthlyRow] = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)::text`, count: sql<number>`count(*)::int` })
+          .from(paymentEntries)
+          .where(and(
+            eq(paymentEntries.employeeId, emp.id),
+            eq(paymentEntries.status, "approved"),
+            gteOp(paymentEntries.createdAt, monthStart),
+          ));
+        const [allTimeRow] = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)::text` })
+          .from(paymentEntries)
+          .where(and(eq(paymentEntries.employeeId, emp.id), eq(paymentEntries.status, "approved")));
+        const [pendingRow] = await db.select({ count: sql<number>`count(*)::int` })
+          .from(paymentEntries)
+          .where(and(eq(paymentEntries.employeeId, emp.id), eq(paymentEntries.status, "pending_approval")));
+        return {
+          id: emp.id,
+          name: emp.name,
+          monthlyRevenue: parseFloat(monthlyRow?.total ?? "0"),
+          monthlyCount: monthlyRow?.count ?? 0,
+          allTimeRevenue: parseFloat(allTimeRow?.total ?? "0"),
+          pendingAdhocCount: pendingRow?.count ?? 0,
+        };
+      }));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/payments/:id/approve — approve ad-hoc payment
+  app.patch("/api/admin/payments/:id/approve", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      await db.update(paymentEntries)
+        .set({ status: "approved", reviewedById: req.session.employeeId, reviewedAt: new Date() })
+        .where(eq(paymentEntries.id, parseInt(req.params.id)));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/admin/payments/:id/reject — reject ad-hoc payment
+  app.patch("/api/admin/payments/:id/reject", async (req: any, res) => {
+    if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
+    const me = await storage.getEmployee(req.session.employeeId);
+    if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    try {
+      await db.update(paymentEntries)
+        .set({ status: "rejected", reviewedById: req.session.employeeId, reviewedAt: new Date() })
+        .where(eq(paymentEntries.id, parseInt(req.params.id)));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Update admin notifications to include pending adhoc payments
   app.get("/api/admin/notifications", async (req: any, res) => {
     if (!req.session?.employeeId) return res.status(401).json({ message: "Unauthorized" });
     const me = await storage.getEmployee(req.session.employeeId);
     if (!me || me.role !== "admin") return res.status(403).json({ message: "Forbidden" });
     try {
-      const [pendingRow] = await db.select({ count: sql<number>`count(*)::int` })
+      const [pendingTopUp] = await db.select({ count: sql<number>`count(*)::int` })
         .from(topUpRequests).where(eq(topUpRequests.status, "pending"));
       const zeroBalanceRows = await db.select({ employeeId: autoBalances.employeeId })
-        .from(autoBalances)
-        .where(sql`${autoBalances.currentBalance}::numeric <= 0`);
+        .from(autoBalances).where(sql`${autoBalances.currentBalance}::numeric <= 0`);
+      const [pendingPayments] = await db.select({ count: sql<number>`count(*)::int` })
+        .from(paymentEntries).where(eq(paymentEntries.status, "pending_approval"));
       res.json({
-        pendingTopUpCount: pendingRow?.count ?? 0,
+        pendingTopUpCount: pendingTopUp?.count ?? 0,
         zeroBalanceCount: zeroBalanceRows.length,
+        pendingAdhocCount: pendingPayments?.count ?? 0,
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message });

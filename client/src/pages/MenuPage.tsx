@@ -1,5 +1,5 @@
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, CalendarCheck, MessageCircle, Wallet } from "lucide-react";
+import { LogOut, CalendarCheck, MessageCircle, Wallet, PlusCircle } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
@@ -48,6 +48,14 @@ export default function MenuPage() {
         >
           <Wallet className="w-4 h-4 text-primary" />
           My Auto Balance
+        </Button>
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-3"
+          onClick={() => navigate("/adhoc-payment")}
+        >
+          <PlusCircle className="w-4 h-4 text-primary" />
+          Add Ad-hoc Payment
         </Button>
       </div>
 

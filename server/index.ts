@@ -123,9 +123,28 @@ app.use((req, res, next) => {
       );
       CREATE INDEX IF NOT EXISTS idx_topup_employee ON top_up_requests(employee_id);
       CREATE INDEX IF NOT EXISTS idx_topup_status ON top_up_requests(status);
+      CREATE TABLE IF NOT EXISTS payment_entries (
+        id SERIAL PRIMARY KEY,
+        employee_id INTEGER NOT NULL REFERENCES employees(id),
+        order_id INTEGER REFERENCES orders(id),
+        amount NUMERIC NOT NULL,
+        payment_mode TEXT NOT NULL DEFAULT 'cash',
+        screenshot_data TEXT,
+        screenshot_mime TEXT DEFAULT 'image/jpeg',
+        notes TEXT,
+        customer_name TEXT,
+        is_adhoc INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'approved',
+        reviewed_by_id INTEGER REFERENCES employees(id),
+        reviewed_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_pe_employee ON payment_entries(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_pe_status ON payment_entries(status);
+      CREATE INDEX IF NOT EXISTS idx_pe_created ON payment_entries(created_at);
     `);
     client.release();
-    console.log("[Migrations] Auto-balance tables ready");
+    console.log("[Migrations] Auto-balance + payment tables ready");
   } catch (e: any) {
     console.error("[Migrations] Failed:", e.message);
   }

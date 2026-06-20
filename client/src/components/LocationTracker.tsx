@@ -56,15 +56,12 @@ export function LocationTracker() {
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: !!(user && user.role === "employee" && user.isOnline),
+    enabled: !!(user && user.role === "employee"),
     refetchInterval: 30000,
   });
 
-  const shouldTrack = !!(
-    user &&
-    user.role === "employee" &&
-    (user.isOnline || activeOrder)
-  );
+  // Track whenever an employee is logged in — isOnline flag is stale after reload
+  const shouldTrack = !!(user && user.role === "employee");
 
   const getInterval = useCallback(
     (speed: number | null): number => {
